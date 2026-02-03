@@ -1,0 +1,4 @@
+ffmpeg-python==0.2.0
+srt==3.5.3
+deep-translator==1.11.4
+tqdm==4.67.1
