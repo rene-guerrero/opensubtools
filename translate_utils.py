@@ -360,7 +360,7 @@ def extract_subtitles(video_path: Path, output_path: Path, stream_index: int = 0
 
 
 def strip_formatting_from_text(text: str) -> tuple[str, List[tuple]]:
-    """Extract plain text from HTML/XML/SSA formatting.
+    r"""Extract plain text from HTML/XML/SSA formatting.
 
     Removes:
     - HTML/XML tags: <font ...>, </font>, <b>, </b>, etc.
