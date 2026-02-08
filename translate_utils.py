@@ -91,7 +91,7 @@ def is_english_line(line: str) -> bool:
     return ratio > 0.6
 
 def translate_batch_text(texts: List[str], translator, max_retries: int = 3, delimiter: str = DEFAULT_DELIM) -> List[str]:
-    """Translate batch of text with detailed error logging and formatting handling.
+    """Translate batch of text with formatting handling.
 
     Removes formatting tags before translation and restores them after.
     Falls back to returning original texts if all retries exhausted.
@@ -100,7 +100,6 @@ def translate_batch_text(texts: List[str], translator, max_retries: int = 3, del
     import requests
 
     # Step 1: Clean texts by removing formatting tags
-    # Keep track of original texts for restoration
     cleaned_texts = []
     formatting_info = []
 
@@ -111,61 +110,44 @@ def translate_batch_text(texts: List[str], translator, max_retries: int = 3, del
 
     # Step 2: Join cleaned texts for batch translation
     batch = delimiter.join(cleaned_texts)
-    logger.debug(f"Batch translation: {len(texts)} lines, {len(batch)} chars (stripped {sum(len(tags) for _, tags in formatting_info)} formatting codes)")
 
     for attempt in range(max_retries):
         try:
-            logger.debug(f"Attempt {attempt + 1}/{max_retries} - Translating {len(texts)} lines ({len(batch)} chars)")
             translated = translator.translate(batch)
 
-            # Validate delimiter wasn't lost in translation
-            if delimiter not in translated:
-                logger.warning(f"Delimiter possibly lost in translation output")
-
-            # Split by delimiter
+            # Split by delimiter (ignoring any part count mismatches)
             parts = translated.split(delimiter)
-            if len(parts) != len(texts):
-                logger.warning(f"Expected {len(texts)} parts after split, got {len(parts)}")
 
             # Step 3: Restore formatting to translated parts
             result = []
             for i, (orig_text, tags) in enumerate(formatting_info):
                 translated_part = parts[i].strip() if i < len(parts) else cleaned_texts[i]
-                # Restore formatting from original to translated
                 restored = apply_formatting_after_translation(translated_part, orig_text)
                 result.append(restored)
 
-            logger.debug(f"✅ Batch translation SUCCESS: {len(texts)} lines translated and formatted")
             return result
 
-        except requests.exceptions.Timeout as e:
-            logger.warning(f"Attempt {attempt + 1}/{max_retries} timeout: {str(e)[:100]}")
+        except requests.exceptions.Timeout:
             if attempt == max_retries - 1:
-                logger.error(f"❌ Batch translation FAILED after {max_retries} attempts (timeout) - returning original")
                 return texts
 
-        except requests.exceptions.ConnectionError as e:
-            logger.warning(f"Attempt {attempt + 1}/{max_retries} connection error: {str(e)[:100]}")
+        except requests.exceptions.ConnectionError:
             if attempt == max_retries - 1:
-                logger.error(f"❌ Batch translation FAILED (connection error) - returning original")
                 return texts
 
-        except Exception as e:
-            logger.warning(f"Attempt {attempt + 1}/{max_retries} error ({type(e).__name__}): {str(e)[:100]}")
+        except Exception:
             if attempt == max_retries - 1:
-                logger.error(f"❌ Batch translation FAILED: {len(texts)} lines returned untranslated")
                 return texts
 
         # Exponential backoff: 1s, 2s, 4s
         if attempt < max_retries - 1:
             wait_time = 2 ** attempt
-            logger.debug(f"Waiting {wait_time}s before retry...")
             time.sleep(wait_time)
 
     return texts
 
 def translate_text(text: str, translator, max_retries: int = 3) -> str:
-    """Translate single text with retry logic, logging, and formatting handling."""
+    """Translate single text with retry logic and formatting handling."""
     import time
     import requests
 
@@ -179,24 +161,16 @@ def translate_text(text: str, translator, max_retries: int = 3) -> str:
 
     for attempt in range(max_retries):
         try:
-            logger.debug(f"Single translation attempt {attempt + 1}/{max_retries}: {len(clean_text)} chars (stripped {len(tags)} formatting codes)")
             result = translator.translate(clean_text)
-
-            # Restore formatting to result
             formatted_result = apply_formatting_after_translation(result, text)
-            logger.debug(f"✅ Single translation SUCCESS")
             return formatted_result
 
         except requests.exceptions.Timeout:
-            logger.warning(f"Attempt {attempt + 1}/{max_retries} timeout on single text")
             if attempt == max_retries - 1:
-                logger.error(f"❌ Single translation FAILED (timeout)")
                 return text
 
-        except Exception as e:
-            logger.warning(f"Attempt {attempt + 1}/{max_retries} error on single text: {str(e)[:100]}")
+        except Exception:
             if attempt == max_retries - 1:
-                logger.error(f"❌ Single translation FAILED")
                 return text
 
         # Exponential backoff
@@ -242,13 +216,10 @@ def optimize_batch_size(lines_to_translate: List[str]) -> int:
     # - Medium lines (50-100 chars): batch up to 6000 chars
     # - Long lines (>100 chars): batch up to 3000 chars
     if avg_line_len < 50:
-        logger.debug(f"Short lines detected (avg {avg_line_len:.1f} chars) → using 8000 char batches")
         return 8000
     elif avg_line_len < 100:
-        logger.debug(f"Medium lines detected (avg {avg_line_len:.1f} chars) → using 6000 char batches")
         return 6000
     else:
-        logger.debug(f"Long lines detected (avg {avg_line_len:.1f} chars) → using 3000 char batches")
         return 3000
 
 
@@ -276,18 +247,18 @@ def create_smart_batches(lines: List[str], target_batch_chars: int = 5000) -> Li
     if current_batch:
         batches.append(current_batch)
 
-    logger.debug(f"Created {len(batches)} smart batches (max {target_batch_chars} chars each)")
     return batches
 
 
 def translate_batches_parallel(batches: List[List[str]], translator,
-                               max_workers: int = 2) -> List[List[str]]:
+                               max_workers: int = 2, progress_callback=None) -> List[List[str]]:
     """Translate multiple batches in parallel using ThreadPoolExecutor.
 
     Args:
         batches: List of line batches to translate
         translator: Translation object with translate() method
         max_workers: Number of parallel workers (default 2, max recommended 3)
+        progress_callback: Optional callback function(current, total) to report progress
 
     Returns:
         List of translated batches (same structure as input)
@@ -300,9 +271,10 @@ def translate_batches_parallel(batches: List[List[str]], translator,
     if len(batches) == 1:
         # Single batch - no need for parallelization
         translated = translate_batch_text(batches[0], translator)
+        if progress_callback:
+            progress_callback(1, 1)
         return [translated]
 
-    logger.info(f"Starting parallel translation of {len(batches)} batches with {max_workers} workers")
     translated_batches = [None] * len(batches)
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -319,12 +291,11 @@ def translate_batches_parallel(batches: List[List[str]], translator,
                 result = future.result()
                 translated_batches[idx] = result
                 completed += 1
-                logger.debug(f"Batch {idx + 1}/{len(batches)} completed ({completed}/{len(batches)})")
-            except Exception as e:
-                logger.error(f"Batch {idx} failed in parallel processing: {e}")
+                if progress_callback:
+                    progress_callback(completed, len(batches))
+            except Exception:
                 translated_batches[idx] = batches[idx]  # Fallback to original
 
-    logger.info(f"Parallel translation complete: {completed}/{len(batches)} batches")
     return translated_batches
 
 def has_embedded_subtitles(video_path: Path) -> bool:
@@ -427,7 +398,6 @@ def strip_formatting_from_text(text: str) -> tuple[str, List[tuple]]:
         clean_text = clean_text[:pos] + clean_text[pos + len(tag):]
         match_count += 1
 
-    logger.debug(f"Stripped {len(tag_info)} formatting tags/codes from text: '{text[:50]}...' → '{clean_text[:50]}...'")
     return clean_text, tag_info
 
 
@@ -471,8 +441,7 @@ def restore_formatting_to_text(clean_text: str, tag_info: List[tuple], original_
         result = ''.join(leading_tags) + clean_text + ''.join(trailing_tags)
         return result
 
-    except Exception as e:
-        logger.debug(f"Formatting restoration failed: {e} - returning original")
+    except Exception:
         return original_text
 
 
