@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Script para extraer subtítulos embebidos de videos, traducirlos del inglés al español
-y guardarlos como archivos .srt.
+Batch extract embedded subtitles from videos, translate from English to Spanish,
+and save as .srt files.
 """
 
 import argparse
@@ -9,112 +9,110 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from typing import List, Optional
 
 import ffmpeg
 import srt
 from deep_translator import GoogleTranslator
-from tqdm import tqdm
+
+from translate_utils import (
+    translate_batch_text,
+    translate_text,
+    DEFAULT_DELIM,
+    has_embedded_subtitles,
+    get_subtitle_streams,
+    extract_subtitles
+)
+from config import get_config, load_config
+from logging_config import get_logger
+
+logger = get_logger()
 
 
-def get_video_files(folder_path):
-    """Obtiene todos los archivos de video de una carpeta."""
-    video_extensions = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
+def get_video_files(folder_path: str | Path) -> List[Path]:
+    """Get all video files from a folder recursively.
+
+    Args:
+        folder_path: Path to folder to search
+
+    Returns:
+        Sorted list of video file paths
+    """
+    config = get_config()
     folder = Path(folder_path)
-    
+
     if not folder.exists():
-        print(f"Error: La carpeta '{folder_path}' no existe.")
+        logger.error(f"Folder not found: {folder_path}")
         sys.exit(1)
-    
-    video_files = [f for f in folder.iterdir() if f.is_file() and f.suffix.lower() in video_extensions]
-    return sorted(video_files)
+
+    # Recursively collect video files in subdirectories
+    video_files = [
+        f for f in folder.rglob('*')
+        if f.is_file() and f.suffix.lower() in config.video_formats
+    ]
+    # Sort by path string for deterministic order across OS
+    return sorted(video_files, key=lambda p: str(p).lower())
 
 
-def has_embedded_subtitles(video_path):
-    """Verifica si un video tiene subtítulos embebidos."""
-    try:
-        probe = ffmpeg.probe(str(video_path))
-        streams = probe.get('streams', [])
-        
-        for stream in streams:
-            if stream.get('codec_type') == 'subtitle':
-                return True
-        return False
-    except Exception as e:
-        print(f"Error al analizar {video_path}: {e}")
-        return False
+def translate_srt_file(input_path: Path, output_path: Path, translator: GoogleTranslator,
+                      batch_size: int = 50) -> bool:
+    """Translate an SRT file from English to Spanish using batches.
 
+    Args:
+        input_path: Path to input .srt file
+        output_path: Path to save translated .srt file
+        translator: GoogleTranslator instance
+        batch_size: Number of subtitles per batch
 
-def get_subtitle_streams(video_path):
-    """Obtiene los streams de subtítulos de un video."""
-    try:
-        probe = ffmpeg.probe(str(video_path))
-        streams = probe.get('streams', [])
-        
-        subtitle_streams = []
-        for i, stream in enumerate(streams):
-            if stream.get('codec_type') == 'subtitle':
-                subtitle_streams.append({
-                    'index': i,
-                    'codec': stream.get('codec_name', 'unknown'),
-                    'language': stream.get('tags', {}).get('language', 'unknown'),
-                    'title': stream.get('tags', {}).get('title', f'Subtítulo {i}')
-                })
-        return subtitle_streams
-    except Exception as e:
-        print(f"Error al obtener subtítulos de {video_path}: {e}")
-        return []
-
-
-def extract_subtitles(video_path, output_path, stream_index=0):
-    """Extrae subtítulos de un video usando ffmpeg."""
-    try:
-        # Extraer subtítulos en formato srt
-        stream = ffmpeg.input(str(video_path))
-        stream = ffmpeg.output(stream, str(output_path), map=f'0:s:{stream_index}')
-        ffmpeg.run(stream, overwrite_output=True, quiet=True)
-        return True
-    except Exception as e:
-        print(f"Error al extraer subtítulos de {video_path}: {e}")
-        return False
-
-
-def translate_text(text, translator, max_retries=3):
-    """Traduce texto del inglés al español con reintentos."""
-    if not text or not text.strip():
-        return text
-    
-    for attempt in range(max_retries):
-        try:
-            translated = translator.translate(text)
-            return translated
-        except Exception as e:
-            if attempt == max_retries - 1:
-                print(f"Error al traducir (después de {max_retries} intentos): {e}")
-                return text
-            continue
-    return text
-
-
-def translate_srt_file(input_path, output_path, translator):
-    """Traduce un archivo SRT del inglés al español."""
+    Returns:
+        True if successful, False otherwise
+    """
+    config = get_config()
     try:
         with open(input_path, 'r', encoding='utf-8') as f:
             srt_content = f.read()
-        
-        # Parsear subtítulos
+
+        # Parse subtitles
         try:
             subtitles = list(srt.parse(srt_content))
         except Exception as e:
-            print(f"Error al parsear SRT: {e}")
-            # Intentar limpiar el contenido
-            srt_content = clean_srt_content(srt_content)
+            logger.warning(f"Could not parse SRT: {e}")
+            # Try to clean content
+            srt_content = re.sub(r'\r\n', '\n', srt_content)
+            srt_content = re.sub(r'\r', '\n', srt_content)
             subtitles = list(srt.parse(srt_content))
-        
-        # Traducir cada subtítulo
+
+        if not subtitles:
+            logger.warning("No subtitles found in file")
+            return False
+
+        total_subtitles = len(subtitles)
+        logger.info(f"Translating {total_subtitles} subtitles...")
+
+        # Process in batches
+        all_translated_texts = []
+        for batch_start in range(0, total_subtitles, batch_size):
+            batch_end = min(batch_start + batch_size, total_subtitles)
+            batch_subtitles = subtitles[batch_start:batch_end]
+
+            # Extract texts from batch
+            batch_texts = [subtitle.content for subtitle in batch_subtitles]
+
+            logger.debug(f"Batch {batch_start//batch_size + 1}/{(total_subtitles + batch_size - 1)//batch_size}")
+
+            # Translate batch
+            batch_translated = translate_batch_text(batch_texts, translator)
+            all_translated_texts.extend(batch_translated)
+
+        # Reconstruct subtitles with translated text
         translated_subtitles = []
-        for subtitle in tqdm(subtitles, desc="Traduciendo subtítulos", leave=False):
-            translated_content = translate_text(subtitle.content, translator)
+        for i, subtitle in enumerate(subtitles):
+            translated_content = (
+                all_translated_texts[i] if i < len(all_translated_texts)
+                else subtitle.content
+            )
             translated_subtitle = srt.Subtitle(
                 index=subtitle.index,
                 start=subtitle.start,
@@ -122,140 +120,148 @@ def translate_srt_file(input_path, output_path, translator):
                 content=translated_content
             )
             translated_subtitles.append(translated_subtitle)
-        
-        # Escribir archivo traducido
+
+        # Write translated file
         translated_srt = srt.compose(translated_subtitles)
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(translated_srt)
-        
+
+        logger.info("Translation completed")
         return True
+
     except Exception as e:
-        print(f"Error al traducir {input_path}: {e}")
+        logger.error(f"Translation error: {e}")
         return False
 
 
-def clean_srt_content(content):
-    """Limpia el contenido SRT para hacerlo parseable."""
-    # Eliminar caracteres BOM
-    content = content.replace('\ufeff', '')
-    
-    # Normalizar líneas
-    content = re.sub(r'\r\n', '\n', content)
-    content = re.sub(r'\r', '\n', content)
-    
-    # Asegurar que haya líneas en blanco entre subtítulos
-    content = re.sub(r'\n\n+', '\n\n', content)
-    
-    return content.strip()
+def process_video(video_path: Path, translator: GoogleTranslator, overwrite: bool = False) -> bool:
+    """Process a video: extract subtitles and translate them.
 
+    Args:
+        video_path: Path to video file
+        translator: GoogleTranslator instance
+        overwrite: Whether to overwrite existing translations
 
-def process_video(video_path, translator, overwrite=False):
-    """Procesa un video: extrae subtítulos y los traduce."""
-    video_path = Path(video_path)
+    Returns:
+        True if successful, False otherwise
+    """
+    config = get_config()
     output_srt = video_path.with_suffix('.es.srt')
     temp_srt = video_path.with_suffix('.temp.srt')
-    
-    # Verificar si ya existe el archivo traducido
+
+    # Check if already translated
     if output_srt.exists() and not overwrite:
-        print(f"  ⏭️  Subtítulos ya existen para: {video_path.name}")
+        logger.info(f"Skipping (already has subtitles): {video_path.name}")
         return False
-    
-    print(f"\n🎬 Procesando: {video_path.name}")
-    
-    # Verificar si tiene subtítulos embebidos
+
+    logger.info(f"Processing: {video_path.name}")
+
+    # Check for embedded subtitles
     if not has_embedded_subtitles(video_path):
-        print(f"  ❌ No tiene subtítulos embebidos")
+        logger.debug("No embedded subtitles found")
         return False
-    
-    # Obtener información de streams de subtítulos
+
+    # Get subtitle streams
     subtitle_streams = get_subtitle_streams(video_path)
     if not subtitle_streams:
-        print(f"  ❌ No se pudieron detectar streams de subtítulos")
+        logger.warning("Could not detect subtitle streams")
         return False
-    
-    print(f"  📋 Encontrados {len(subtitle_streams)} stream(s) de subtítulos")
-    
-    # Usar el primer stream (generalmente el primario)
-    target_stream = 0
-    for i, stream in enumerate(subtitle_streams):
-        lang = stream['language'].lower()
-        if lang in ['eng', 'en', 'english']:
-            target_stream = i
-            print(f"  ✅ Usando subtítulos en inglés (stream {i})")
-            break
-    else:
-        print(f"  ⚠️  Usando primer stream disponible (stream {target_stream})")
-    
-    # Extraer subtítulos
-    print(f"  📥 Extrayendo subtítulos...")
+
+    logger.debug(f"Found {len(subtitle_streams)} subtitle stream(s)")
+
+    # Look for English subtitles (prefer longest stream)
+    english_streams = [
+        s for s in subtitle_streams
+        if str(s['language']).lower() in config.english_codes
+    ]
+
+    if not english_streams:
+        logger.debug("No English subtitles found")
+        return False
+
+    # Use first English stream
+    target_stream = english_streams[0]['subtitle_index']
+    logger.info(f"Using English subtitle stream {target_stream}")
+
+    # Extract subtitles
+    logger.debug("Extracting subtitles...")
     if not extract_subtitles(video_path, temp_srt, target_stream):
         return False
-    
-    # Traducir subtítulos
-    print(f"  🌐 Traduciendo al español...")
+
+    # Translate subtitles
+    logger.info("Translating to Spanish...")
     if translate_srt_file(temp_srt, output_srt, translator):
-        print(f"  ✅ Subtítulos guardados en: {output_srt.name}")
+        logger.info(f"Saved: {output_srt.name}")
         success = True
     else:
-        print(f"  ❌ Error al traducir subtítulos")
+        logger.error("Translation failed")
         success = False
-    
-    # Limpiar archivo temporal
+
+    # Clean up temp file
     if temp_srt.exists():
-        temp_srt.unlink()
-    
+        try:
+            temp_srt.unlink()
+        except Exception:
+            pass
+
     return success
 
 
-def main():
+def main() -> None:
+    """Main entry point for batch processing."""
     parser = argparse.ArgumentParser(
-        description='Extrae subtítulos embebidos de videos y los traduce al español'
+        description="Batch extract and translate subtitles from videos",
+        epilog="Processes all videos in a folder recursively"
     )
     parser.add_argument(
-        'folder',
-        help='Carpeta que contiene los videos'
+        "folder",
+        help="Folder containing videos"
     )
     parser.add_argument(
-        '--overwrite',
-        action='store_true',
-        help='Sobrescribir archivos .srt existentes'
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing translations"
     )
-    
+    parser.add_argument(
+        "--config",
+        help="Optional path to config.yaml file",
+        default=None
+    )
     args = parser.parse_args()
-    
-    # Verificar que ffmpeg esté instalado
+
+    # Load config if specified
+    if args.config:
+        load_config(args.config)
+
+    # Verify ffmpeg is installed
     try:
-        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print("❌ Error: ffmpeg no está instalado o no está en el PATH")
-        print("Por favor, instala ffmpeg:")
-        print("  Windows: winget install Gyan.FFmpeg")
-        print("  Mac: brew install ffmpeg")
-        print("  Linux: sudo apt install ffmpeg")
+        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True, timeout=5)
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        logger.error("FFmpeg not found or not in PATH")
+        logger.info("Install ffmpeg: winget install Gyan.FFmpeg")
         sys.exit(1)
-    
-    # Inicializar traductor
-    print("🔄 Inicializando traductor...")
+
+    # Initialize translator
+    logger.info("Initializing translator...")
     translator = GoogleTranslator(source='en', target='es')
-    
-    # Obtener archivos de video
-    print(f"\n📁 Buscando videos en: {args.folder}")
+
+    # Get video files
+    logger.info(f"Scanning: {args.folder}")
     video_files = get_video_files(args.folder)
-    
+
     if not video_files:
-        print("❌ No se encontraron archivos de video en la carpeta especificada")
-        print("Formatos soportados: .mp4, .mkv, .avi, .mov, .wmv, .flv, .webm, .m4v")
+        logger.error("No video files found")
         sys.exit(1)
-    
-    print(f"✅ Encontrados {len(video_files)} archivo(s) de video")
-    
-    # Procesar cada video
+
+    logger.info(f"Found {len(video_files)} video file(s)")
+
+    # Process each video
     success_count = 0
     for video_file in video_files:
         if process_video(video_file, translator, args.overwrite):
             success_count += 1
-    
-    print(f"\n🎉 Proceso completado: {success_count}/{len(video_files)} videos procesados correctamente")
+
+    logger.info(f"✅ Completed: {success_count}/{len(video_files)} videos processed")
 
 
 if __name__ == '__main__':

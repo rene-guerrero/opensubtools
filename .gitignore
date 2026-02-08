@@ -1,10 +1,12 @@
 # Python
-venv/
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+env/
+venv/
+ENV/
 build/
 develop-eggs/
 dist/
@@ -20,6 +22,12 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
+
+# Virtual environments
+.venv
+env.bak/
+venv.bak/
 
 # IDEs
 .vscode/
@@ -28,20 +36,32 @@ wheels/
 *.swo
 *~
 
+# Logging
+*.log
+logs/
+subtitle_generation.log
+
+# Temporary files
+.claude/
+.opencode/
+*.tmp
+*.temp
+temp/
+tmp/
+tmpclaude-*
+*-cwd
+
 # OS
 .DS_Store
 Thumbs.db
+nul
 
-# Output files (subtitles)
-*.srt
-!*.example.srt
+# Config (leave example only)
+config.yaml
+!config.yaml.example
 
-# Videos (for testing)
-*.mp4
-*.mkv
-*.avi
-*.mov
-*.wmv
-*.flv
-*.webm
-*.m4v
+# Generated files
+*.es.srt
+*.en.srt
+*.synced.srt
+*.temp.srt
