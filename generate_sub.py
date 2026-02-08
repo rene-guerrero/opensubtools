@@ -32,8 +32,6 @@ def validate_video_path(path_str: str) -> Path:
     """Validate and normalize video file path with detailed error reporting."""
     # First pass: strip whitespace and outer quotes
     path_str = path_str.strip().strip('"\'')
-    logger.debug(f"Path received: {repr(path_str)}")
-    logger.debug(f"Path length: {len(path_str)} characters")
 
     video_path = Path(path_str)
 
@@ -42,10 +40,6 @@ def validate_video_path(path_str: str) -> Path:
     os_path_exists = os.path.exists(str(video_path))
     os_path_isfile = os.path.isfile(str(video_path))
 
-    logger.debug(f"Path.exists(): {pathlib_exists}")
-    logger.debug(f"os.path.exists(): {os_path_exists}")
-    logger.debug(f"os.path.isfile(): {os_path_isfile}")
-
     # Windows-specific: use ctypes to check file access
     if sys.platform == 'win32':
         try:
@@ -53,16 +47,13 @@ def validate_video_path(path_str: str) -> Path:
             # GetFileAttributesW returns file attributes or INVALID_FILE_ATTRIBUTES (-1)
             attrs = kernel32.GetFileAttributesW(str(video_path))
             is_file = attrs != -1 and not (attrs & 0x10)  # 0x10 = FILE_ATTRIBUTE_DIRECTORY
-            logger.debug(f"Windows GetFileAttributesW: {attrs} (is file: {is_file})")
-        except Exception as e:
-            logger.debug(f"ctypes GetFileAttributesW error: {e}")
+        except Exception:
+            pass
 
     # If using Windows long path support, try with \\?\ prefix
     if sys.platform == 'win32' and len(str(video_path.absolute())) > 260:
-        logger.debug("Long path detected (>260 chars), checking with long path prefix...")
         long_path = f"\\\\?\\{video_path.absolute()}"
         long_exists = os.path.exists(long_path)
-        logger.debug(f"Long path exists: {long_exists}")
 
     # Try using Windows 'dir' command to verify file exists
     if sys.platform == 'win32':
@@ -76,22 +67,20 @@ def validate_video_path(path_str: str) -> Path:
                 timeout=5
             )
             if result.returncode == 0:
-                logger.debug(f"Windows dir command found file: {result.stdout.strip()}")
-        except Exception as e:
-            logger.debug(f"Windows dir command error: {e}")
+                pass
+        except Exception:
+            pass
 
     # Try listing parent directory with glob
     if video_path.parent.exists():
         try:
             parent_contents = list(video_path.parent.glob('*'))
             matches = [f for f in parent_contents if f.name.lower() == video_path.name.lower()]
-            logger.debug(f"Parent dir exists: {video_path.parent}")
-            logger.debug(f"Files in parent: {len(parent_contents)}")
             if matches:
                 logger.info(f"Found matching file in directory listing: {matches[0].name}")
                 return matches[0]
-        except Exception as e:
-            logger.debug(f"Error listing parent directory: {e}")
+        except Exception:
+            pass
     else:
         logger.error(f"Parent directory does not exist: {video_path.parent}")
 
@@ -105,7 +94,6 @@ def validate_video_path(path_str: str) -> Path:
     logger.error(f"Absolute path: {video_path.absolute()}")
     logger.error(f"Parent directory: {video_path.parent}")
     logger.error(f"Filename: {video_path.name}")
-    logger.error(f"Filename length: {len(video_path.name)} characters")
 
     # Last attempt: list all files in parent to see what's there
     try:
@@ -241,7 +229,11 @@ def extract_embedded_spanish_subtitles(video_path: Path, output_srt: Path) -> bo
 
 
 def extract_and_translate_embedded_english_subtitles(video_path: Path, output_srt: Path) -> bool:
-    """Try to extract English subtitles from video and translate them."""
+    """Try to extract English subtitles from video and translate them.
+
+    Selects the English subtitle stream with the most content to avoid
+    extracting soundtrack-only subtitles (e.g., song lyrics).
+    """
     logger.info("Attempting to extract English subtitles from video...")
 
     if not has_embedded_subtitles(video_path):
@@ -258,27 +250,57 @@ def extract_and_translate_embedded_english_subtitles(video_path: Path, output_sr
     english_streams = [s for s in subtitle_streams
                       if str(s['language']).lower() in config.english_codes]
 
-    if english_streams:
-        best_stream = english_streams[0]
-        logger.info(f"Found English subtitle stream (index {best_stream['subtitle_index']})")
+    if not english_streams:
+        logger.debug("No English subtitles found in video")
+        return False
 
-        # Extract to temporary file
-        temp_srt = video_path.parent / f"{video_path.stem}.temp_extracted.srt"
-        if extract_subtitles_util(video_path, temp_srt, best_stream['subtitle_index']):
-            logger.info("English subtitles extracted")
-            logger.info("Translating to Spanish...")
-            try:
-                translate_srt(temp_srt, output_srt)
-                logger.info(f"Saved as: {output_srt.name}")
+    # Find the English subtitle with the most content (to avoid song-only subtitles)
+    best_stream = None
+    best_char_count = 0
+
+    for stream in english_streams:
+        # Extract temporarily to count characters
+        temp_srt = video_path.parent / f"{video_path.stem}.temp_size_check_{stream['subtitle_index']}.srt"
+        try:
+            if extract_subtitles_util(video_path, temp_srt, stream['subtitle_index']):
+                # Count characters in the extracted subtitle
+                content = temp_srt.read_text(encoding="utf-8", errors="ignore")
+                char_count = len(content)
+                logger.debug(f"Stream {stream['subtitle_index']}: {char_count} characters")
+
+                if char_count > best_char_count:
+                    best_char_count = char_count
+                    best_stream = stream
+
+                # Clean up temp file
                 temp_srt.unlink()
-                return True
-            except Exception as e:
-                logger.error(f"Translation failed: {e}")
-                if temp_srt.exists():
-                    temp_srt.unlink()
-                return False
+        except Exception as e:
+            logger.debug(f"Error checking stream {stream['subtitle_index']}: {e}")
+            if temp_srt.exists():
+                temp_srt.unlink()
 
-    logger.debug("No English subtitles found in video")
+    if not best_stream:
+        logger.debug("Could not extract any English subtitle")
+        return False
+
+    logger.info(f"Found English subtitle stream (index {best_stream['subtitle_index']}, {best_char_count} chars)")
+
+    # Extract the best stream to temporary file
+    temp_srt = video_path.parent / f"{video_path.stem}.temp_extracted.srt"
+    if extract_subtitles_util(video_path, temp_srt, best_stream['subtitle_index']):
+        logger.info("English subtitles extracted")
+        logger.info("Translating to Spanish...")
+        try:
+            translate_srt(temp_srt, output_srt)
+            logger.info(f"Saved as: {output_srt.name}")
+            temp_srt.unlink()
+            return True
+        except Exception as e:
+            logger.error(f"Translation failed: {e}")
+            if temp_srt.exists():
+                temp_srt.unlink()
+            return False
+
     return False
 
 
