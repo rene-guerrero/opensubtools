@@ -91,15 +91,27 @@ def is_english_line(line: str) -> bool:
     return ratio > 0.6
 
 def translate_batch_text(texts: List[str], translator, max_retries: int = 3, delimiter: str = DEFAULT_DELIM) -> List[str]:
-    """Translate batch of text with detailed error logging and exponential backoff.
+    """Translate batch of text with detailed error logging and formatting handling.
 
+    Removes formatting tags before translation and restores them after.
     Falls back to returning original texts if all retries exhausted.
     """
     import time
     import requests
 
-    batch = delimiter.join(texts)
-    logger.debug(f"Batch translation: {len(texts)} lines, {len(batch)} chars")
+    # Step 1: Clean texts by removing formatting tags
+    # Keep track of original texts for restoration
+    cleaned_texts = []
+    formatting_info = []
+
+    for text in texts:
+        clean, tags = strip_formatting_from_text(text)
+        cleaned_texts.append(clean)
+        formatting_info.append((text, tags))
+
+    # Step 2: Join cleaned texts for batch translation
+    batch = delimiter.join(cleaned_texts)
+    logger.debug(f"Batch translation: {len(texts)} lines, {len(batch)} chars (stripped {sum(len(tags) for _, tags in formatting_info)} formatting codes)")
 
     for attempt in range(max_retries):
         try:
@@ -115,8 +127,15 @@ def translate_batch_text(texts: List[str], translator, max_retries: int = 3, del
             if len(parts) != len(texts):
                 logger.warning(f"Expected {len(texts)} parts after split, got {len(parts)}")
 
-            result = [p.strip() for p in parts]
-            logger.debug(f"✅ Batch translation SUCCESS: {len(texts)} lines translated")
+            # Step 3: Restore formatting to translated parts
+            result = []
+            for i, (orig_text, tags) in enumerate(formatting_info):
+                translated_part = parts[i].strip() if i < len(parts) else cleaned_texts[i]
+                # Restore formatting from original to translated
+                restored = apply_formatting_after_translation(translated_part, orig_text)
+                result.append(restored)
+
+            logger.debug(f"✅ Batch translation SUCCESS: {len(texts)} lines translated and formatted")
             return result
 
         except requests.exceptions.Timeout as e:
@@ -146,22 +165,30 @@ def translate_batch_text(texts: List[str], translator, max_retries: int = 3, del
     return texts
 
 def translate_text(text: str, translator, max_retries: int = 3) -> str:
-    """Translate single text with retry logic and logging."""
+    """Translate single text with retry logic, logging, and formatting handling."""
     import time
     import requests
 
     if not text or not text.strip():
         return text
 
+    # Clean formatting before translation
+    clean_text, tags = strip_formatting_from_text(text)
+    if not clean_text or not clean_text.strip():
+        return text
+
     for attempt in range(max_retries):
         try:
-            logger.debug(f"Single translation attempt {attempt + 1}/{max_retries}: {len(text)} chars")
-            result = translator.translate(text)
+            logger.debug(f"Single translation attempt {attempt + 1}/{max_retries}: {len(clean_text)} chars (stripped {len(tags)} formatting codes)")
+            result = translator.translate(clean_text)
+
+            # Restore formatting to result
+            formatted_result = apply_formatting_after_translation(result, text)
             logger.debug(f"✅ Single translation SUCCESS")
-            return result
+            return formatted_result
 
         except requests.exceptions.Timeout:
-            logger.warning(f"Attr {attempt + 1}/{max_retries} timeout on single text")
+            logger.warning(f"Attempt {attempt + 1}/{max_retries} timeout on single text")
             if attempt == max_retries - 1:
                 logger.error(f"❌ Single translation FAILED (timeout)")
                 return text
@@ -359,3 +386,126 @@ def extract_subtitles(video_path: Path, output_path: Path, stream_index: int = 0
         return True
     except Exception:
         return False
+
+
+def strip_formatting_from_text(text: str) -> tuple[str, List[tuple]]:
+    """Extract plain text from HTML/XML/SSA formatting.
+
+    Removes:
+    - HTML/XML tags: <font ...>, </font>, <b>, </b>, etc.
+    - SSA/ASS alignment codes: {\an5}, {\c&H...}, etc.
+    - WebVTT tags: <v Name>, <c ...>, etc.
+
+    Args:
+        text: Text with potential formatting tags
+
+    Returns:
+        (clean_text, tag_info) where tag_info is list of (position, tag, length)
+        for later restoration
+    """
+    # Keep track of removed elements for restoration
+    tag_info = []
+    clean_text = text
+    offset = 0
+
+    # Pattern 1: HTML/XML tags like <font ...>, </font>, <b>, etc.
+    html_pattern = r'</?(?:font|b|i|u|br|color|v|c)[^>]*>'
+    for match in re.finditer(html_pattern, text):
+        pos = match.start() - offset
+        tag = match.group()
+        tag_info.append((pos, tag))
+        clean_text = clean_text[:pos] + clean_text[pos + len(tag):]
+        offset += len(tag)
+
+    # Pattern 2: SSA/ASS codes like {\an5} or {\c&HFFB504&}
+    ssa_pattern = r'\{\\[^}]+\}'
+    match_count = 0
+    for match in re.finditer(ssa_pattern, clean_text):
+        pos = match.start()
+        tag = match.group()
+        tag_info.insert(match_count, (pos, tag))
+        clean_text = clean_text[:pos] + clean_text[pos + len(tag):]
+        match_count += 1
+
+    logger.debug(f"Stripped {len(tag_info)} formatting tags/codes from text: '{text[:50]}...' → '{clean_text[:50]}...'")
+    return clean_text, tag_info
+
+
+def restore_formatting_to_text(clean_text: str, tag_info: List[tuple], original_text: str) -> str:
+    """Restore formatting tags back to text.
+
+    Attempts to find original formatting structure and apply to translated text.
+    Falls back to original if restoration fails.
+
+    Args:
+        clean_text: The original clean text (before translation removes it!)
+        tag_info: List of (position, tag) tuples from strip_formatting_from_text()
+        original_text: The original text with formatting
+
+    Returns:
+        Text with formatting restored or original text if restoration fails
+    """
+    if not tag_info:
+        return original_text
+
+    try:
+        # If translation significantly changed text length, return formattings at start and end
+        # This is safer than trying to match positions in changed text
+
+        # Get all leading tags/codes
+        leading_tags = []
+        trailing_tags = []
+
+        # Extract leading formatting
+        text_copy = original_text
+        leading_offset = 0
+        for pos, tag in tag_info:
+            if pos < 50:  # Likely leading formatting
+                leading_tags.append(tag)
+                text_copy = text_copy.replace(tag, '', 1)
+                leading_offset += len(tag)
+            elif pos > len(original_text) - 50:  # Likely trailing
+                trailing_tags.append(tag)
+
+        # Prepend leading tags
+        result = ''.join(leading_tags) + clean_text + ''.join(trailing_tags)
+        return result
+
+    except Exception as e:
+        logger.debug(f"Formatting restoration failed: {e} - returning original")
+        return original_text
+
+
+def clean_subtitle_line_for_translation(line: str) -> tuple[str, str]:
+    """Clean a subtitle line for translation by removing formatting.
+
+    Returns:
+        (clean_text, original_text) tuple
+    """
+    stripped, _ = strip_formatting_from_text(line)
+    return stripped.strip(), line
+
+
+def apply_formatting_after_translation(clean_text: str, dirty_original: str) -> str:
+    """Apply original formatting to translated text.
+
+    Tries to reinsert tags at the same pattern positions.
+
+    Args:
+        clean_text: The translated clean text
+        dirty_original: The original text with formatting
+
+    Returns:
+        Formatted translated text
+    """
+    # Extract tags/codes from original
+    _, tag_info = strip_formatting_from_text(dirty_original)
+
+    if not tag_info:
+        return clean_text
+
+    # Simple strategy: put leading tags at start, trailing at end
+    leading_tags = [tag for pos, tag in tag_info if pos < 20]
+    trailing_tags = [tag for pos, tag in tag_info if pos >= len(dirty_original) - 20]
+
+    return ''.join(leading_tags) + clean_text + ''.join(trailing_tags)
