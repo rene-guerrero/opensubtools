@@ -434,7 +434,22 @@ def main() -> None:
 
     logger.info(f"Generating subtitles for: {video_path.name}")
 
-    # Case 1: Try to download Spanish subtitles
+    # Case 1: Try to find and translate local .srt file
+    if find_and_translate_local_srt(video_path, output_srt):
+        logger.info("✅ Subtitles processed successfully")
+        sys.exit(0)
+
+    # Case 2: Try to extract Spanish subtitles embedded in video
+    if extract_embedded_spanish_subtitles(video_path, output_srt):
+        logger.info("✅ Subtitles extracted successfully")
+        sys.exit(0)
+
+    # Case 3: Try to extract English subtitles embedded in video and translate
+    if extract_and_translate_embedded_english_subtitles(video_path, output_srt):
+        logger.info("✅ Subtitles extracted and translated")
+        sys.exit(0)
+
+    # Case 4: Try to download Spanish subtitles
     logger.info("Attempting to download Spanish subtitles...")
     spanish_srt = download_subtitle(video_path, "es")
 
@@ -448,7 +463,7 @@ def main() -> None:
 
     logger.warning("Spanish subtitles not found")
 
-    # Case 2: Try to download English subtitles
+    # Case 5: Try to download English subtitles
     logger.info("Attempting to download English subtitles...")
     english_srt = download_subtitle(video_path, "en")
 
@@ -470,22 +485,6 @@ def main() -> None:
             sys.exit(1)
 
     logger.warning("English subtitles not found")
-
-    # Case 3: Try to extract Spanish subtitles embedded in video
-    if extract_embedded_spanish_subtitles(video_path, output_srt):
-        logger.info("✅ Subtitles extracted successfully")
-        sys.exit(0)
-
-    # Case 4: Try to extract English subtitles embedded in video and translate
-    if extract_and_translate_embedded_english_subtitles(video_path, output_srt):
-        logger.info("✅ Subtitles extracted and translated")
-        sys.exit(0)
-
-    # Case 5: Try to find and translate local .srt file
-    if find_and_translate_local_srt(video_path, output_srt):
-        logger.info("✅ Subtitles processed successfully")
-        sys.exit(0)
-
     logger.error("Could not find or generate subtitles")
     sys.exit(1)
 
