@@ -11,7 +11,12 @@ from typing import Optional
 from deep_translator import GoogleTranslator
 from translate_utils import (
     is_english_line,
+    is_english_line_enhanced,
     translate_batch_text,
+    translate_text,
+    create_smart_batches,
+    optimize_batch_size,
+    translate_batches_parallel,
     DEFAULT_DELIM,
     has_embedded_subtitles,
     get_subtitle_streams,
@@ -77,7 +82,6 @@ def validate_video_path(path_str: str) -> Path:
             parent_contents = list(video_path.parent.glob('*'))
             matches = [f for f in parent_contents if f.name.lower() == video_path.name.lower()]
             if matches:
-                logger.info(f"Found matching file in directory listing: {matches[0].name}")
                 return matches[0]
         except Exception:
             pass
@@ -144,59 +148,118 @@ def download_subtitle(video_path: Path, language: str) -> Optional[Path]:
     return None
 
 
-def translate_srt(input_srt: Path, output_srt: Path) -> None:
-    """Translate an SRT file from English to Spanish."""
+def translate_srt(input_srt: Path, output_srt: Path, use_parallel: bool = True) -> None:
+    """Translate SRT file from English to Spanish with fallback and smart batching.
+
+    Strategy:
+    1. Try batch translation (with smart sizing and parallel if enabled)
+    2. If batch fails, fall back to individual line translation
+    3. Log all failures and partial results
+    """
     config = get_config()
     translator = GoogleTranslator(source='en', target='es')
 
     text = input_srt.read_text(encoding="utf-8", errors="ignore")
     lines = text.splitlines(True)
 
-    # Identify English lines
-    eng_indices = [i for i, line in enumerate(lines) if is_english_line(line)]
+    # Identify English lines using enhanced detection
+    eng_indices = [i for i, line in enumerate(lines) if is_english_line_enhanced(line)]
 
     if not eng_indices:
         logger.info("No English lines detected for translation")
         output_srt.write_text(text, encoding="utf-8")
         return
 
+    logger.info(f"Translation: Found {len(eng_indices)} English lines")
     translated_lines = list(lines)
-    total_english = len(eng_indices)
-    translated_so_far = 0
+    translation_cache: dict = {}  # In-memory cache: {original → translated}
 
-    batch_lines = []
-    batch_indices = []
-    max_chars = config.max_batch_chars
+    # Extract lines to translate
+    lines_to_translate = [lines[idx].rstrip("\n") for idx in eng_indices]
+
+    # Determine optimal batch size based on content
+    optimal_batch_size = optimize_batch_size(lines_to_translate)
+
+    # Create smart batches using optimal sizing
+    batch_lines_list = create_smart_batches(lines_to_translate, optimal_batch_size)
+    logger.info(f"Created {len(batch_lines_list)} batches")
+
+    # Try batch translation (with parallelization if requested)
+    batch_failed = False
+    translated_count = 0
+
+    if len(batch_lines_list) > 1 and use_parallel:
+        logger.info(f"Translating {len(batch_lines_list)} batches in parallel")
+        translated_batches = translate_batches_parallel(batch_lines_list, translator,
+                                                        max_workers=config.parallel_workers)
+    else:
+        logger.info(f"Translating {len(batch_lines_list)} batches sequentially")
+        translated_batches = [translate_batch_text(batch, translator) for batch in batch_lines_list]
+
+    # Check if batch translation succeeded
+    for batch_idx, (original_batch, translated_batch) in enumerate(zip(batch_lines_list, translated_batches)):
+        if translated_batch == original_batch:
+            # This batch failed (returned original)
+            logger.warning(f"Batch {batch_idx + 1} appears to have failed")
+            batch_failed = True
+        else:
+            # Cache successful translations
+            for orig, trans in zip(original_batch, translated_batch):
+                translation_cache[orig] = trans
+                translated_count += 1
+
+    # If batch succeeded completely, use cached translations
+    if not batch_failed and translation_cache:
+        logger.info(f"Batch translation succeeded: {len(translation_cache)} lines cached")
+        for idx in eng_indices:
+            original = lines[idx].rstrip("\n")
+            if original in translation_cache:
+                translated_lines[idx] = translation_cache[original] + ("\n" if lines[idx].endswith("\n") else "")
+
+        output_srt.write_text("".join(translated_lines), encoding="utf-8")
+        logger.info(f"Translated SRT saved: {output_srt.name}")
+        return
+
+    # FALLBACK: Batch failed or partially failed - try individual lines
+    logger.warning(f"Batch translation incomplete or failed - falling back to individual line translation")
+    fallback_count = 0
+    failed_count = 0
 
     for idx in eng_indices:
-        line = lines[idx].rstrip("\n")
-        current_batch_len = (sum(len(lines[i]) for i in batch_indices) +
-                           len(DEFAULT_DELIM) * max(0, len(batch_indices) - 1))
+        original = lines[idx].rstrip("\n")
 
-        if batch_indices and (current_batch_len + len(line)) > max_chars:
-            translated = translate_batch_text(batch_lines, translator)
-            for t, pos in zip(translated, batch_indices):
-                translated_lines[pos] = t + ("\n" if lines[pos].endswith("\n") else "")
-            batch_lines = []
-            batch_indices = []
-            translated_so_far += len(translated)
-            if total_english:
-                pct = int((translated_so_far / total_english) * 100)
-                logger.debug(f"Translation progress: {pct}% ({translated_so_far}/{total_english})")
+        # Check cache first
+        if original in translation_cache:
+            translated = translation_cache[original]
+            translated_lines[idx] = translated + ("\n" if lines[idx].endswith("\n") else "")
+            continue
 
-        batch_lines.append(line)
-        batch_indices.append(idx)
+        # Translate individual line
+        try:
+            translated = translate_text(original, translator)
 
-    if batch_indices:
-        translated = translate_batch_text(batch_lines, translator)
-        for t, pos in zip(translated, batch_indices):
-            translated_lines[pos] = t + ("\n" if lines[pos].endswith("\n") else "")
-        translated_so_far += len(translated)
-        if total_english:
-            pct = int((translated_so_far / total_english) * 100)
-            logger.debug(f"Translation progress: {pct}% ({translated_so_far}/{total_english})")
+            if translated == original:
+                # Line was not translated
+                failed_count += 1
+                logger.debug(f"Line {idx}: NOT translated (returned original)")
+            else:
+                translated_lines[idx] = translated + ("\n" if lines[idx].endswith("\n") else "")
+                translation_cache[original] = translated
+                fallback_count += 1
+                logger.debug(f"Line {idx}: OK ({len(original)} → {len(translated)} chars)")
+
+        except Exception as e:
+            failed_count += 1
+            logger.warning(f"Line {idx} translation failed: {str(e)[:100]}")
+
+    # Report fallback results
+    if fallback_count > 0:
+        logger.info(f"Fallback: {fallback_count} lines translated from {len(eng_indices)} total")
+    if failed_count > 0:
+        logger.error(f"Translation: {failed_count}/{len(eng_indices)} lines failed")
 
     output_srt.write_text("".join(translated_lines), encoding="utf-8")
+    logger.info(f"Translated SRT saved: {output_srt.name} ({len(translation_cache)} lines cached)")
 
 
 def extract_embedded_spanish_subtitles(video_path: Path, output_srt: Path) -> bool:

@@ -27,7 +27,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "batch_size_subtitles": 50,
         "source_language": "en",
         "target_language": "es",
-        "delimiter": "\n|||SUBTITLE_DELIMITER|||\n"
+        "delimiter": "\n|||SUBTITLE_DELIMITER|||\n",
+        "parallel_workers": 2
     },
     "detection": {
         "english_keywords": [
@@ -129,6 +130,13 @@ class Config:
     @property
     def batch_size(self) -> int:
         return self.get("translation.batch_size_subtitles", 50)
+
+    @property
+    def parallel_workers(self) -> int:
+        """Number of parallel workers for batch translation (default 2, max recommended 3)."""
+        workers = self.get("translation.parallel_workers", 2)
+        # Ensure within reasonable bounds
+        return max(1, min(workers, 4))
 
     @property
     def use_emoji(self) -> bool:
