@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generate subtitles for a video file. Downloads/extracts in Spanish or English then translates."""
 import argparse
+import ctypes
 import os
 import subprocess
 import sys
@@ -29,7 +30,7 @@ logger = get_logger()
 
 def validate_video_path(path_str: str) -> Path:
     """Validate and normalize video file path with detailed error reporting."""
-    # First pass: strip whitespace and quotes
+    # First pass: strip whitespace and outer quotes
     path_str = path_str.strip().strip('"\'')
     logger.debug(f"Path received: {repr(path_str)}")
     logger.debug(f"Path length: {len(path_str)} characters")
@@ -45,6 +46,17 @@ def validate_video_path(path_str: str) -> Path:
     logger.debug(f"os.path.exists(): {os_path_exists}")
     logger.debug(f"os.path.isfile(): {os_path_isfile}")
 
+    # Windows-specific: use ctypes to check file access
+    if sys.platform == 'win32':
+        try:
+            kernel32 = ctypes.windll.kernel32
+            # GetFileAttributesW returns file attributes or INVALID_FILE_ATTRIBUTES (-1)
+            attrs = kernel32.GetFileAttributesW(str(video_path))
+            is_file = attrs != -1 and not (attrs & 0x10)  # 0x10 = FILE_ATTRIBUTE_DIRECTORY
+            logger.debug(f"Windows GetFileAttributesW: {attrs} (is file: {is_file})")
+        except Exception as e:
+            logger.debug(f"ctypes GetFileAttributesW error: {e}")
+
     # If using Windows long path support, try with \\?\ prefix
     if sys.platform == 'win32' and len(str(video_path.absolute())) > 260:
         logger.debug("Long path detected (>260 chars), checking with long path prefix...")
@@ -52,15 +64,31 @@ def validate_video_path(path_str: str) -> Path:
         long_exists = os.path.exists(long_path)
         logger.debug(f"Long path exists: {long_exists}")
 
-    # Try listing parent directory
+    # Try using Windows 'dir' command to verify file exists
+    if sys.platform == 'win32':
+        try:
+            parent_dir = video_path.parent
+            filename = video_path.name
+            result = subprocess.run(
+                ["cmd", "/c", f"dir /b \"{parent_dir}\" | findstr /i \"{filename}\""],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                logger.debug(f"Windows dir command found file: {result.stdout.strip()}")
+        except Exception as e:
+            logger.debug(f"Windows dir command error: {e}")
+
+    # Try listing parent directory with glob
     if video_path.parent.exists():
         try:
             parent_contents = list(video_path.parent.glob('*'))
-            matches = [f for f in parent_contents if f.name == video_path.name]
+            matches = [f for f in parent_contents if f.name.lower() == video_path.name.lower()]
             logger.debug(f"Parent dir exists: {video_path.parent}")
             logger.debug(f"Files in parent: {len(parent_contents)}")
             if matches:
-                logger.debug(f"Found matching file in directory listing: {matches[0]}")
+                logger.info(f"Found matching file in directory listing: {matches[0].name}")
                 return matches[0]
         except Exception as e:
             logger.debug(f"Error listing parent directory: {e}")
@@ -77,6 +105,21 @@ def validate_video_path(path_str: str) -> Path:
     logger.error(f"Absolute path: {video_path.absolute()}")
     logger.error(f"Parent directory: {video_path.parent}")
     logger.error(f"Filename: {video_path.name}")
+    logger.error(f"Filename length: {len(video_path.name)} characters")
+
+    # Last attempt: list all files in parent to see what's there
+    try:
+        if video_path.parent.exists():
+            parent_files = list(video_path.parent.glob('*'))
+            logger.error(f"Files in parent directory: {len(parent_files)}")
+            # Show first few files for debugging
+            for f in parent_files[:5]:
+                logger.error(f"  - {f.name}")
+            if len(parent_files) > 5:
+                logger.error(f"  ... and {len(parent_files) - 5} more")
+    except Exception as e:
+        logger.error(f"Could not list parent directory: {e}")
+
     sys.exit(1)
 
 
