@@ -1,20 +1,14 @@
 #!/usr/bin/env python3
-"""
-Synchronize subtitles timing in a .srt file by a fixed offset in milliseconds.
+"""Core subtitle synchronization logic.
 
-Usage:
-  python sync_sub.py "path/to/subtitles.srt" 3000
-
-Where 3000 moves subtitles forward by 3 seconds; negative values move backward.
-Produces a new file with the same name but with .synced before the extension.
+Adjusts subtitle timing by a fixed offset.
 """
 
-import argparse
 import re
 from pathlib import Path
+from typing import Optional
 
-from config import get_config, load_config
-from logging_config import get_logger
+from subtitles.utils.logging_config import get_logger
 
 logger = get_logger()
 
@@ -23,7 +17,7 @@ TIME_RE = re.compile(
 )
 
 
-def time_to_ms(ts: str) -> int | None:
+def time_to_ms(ts: str) -> Optional[int]:
     """Convert timestamp to milliseconds.
 
     Args:
@@ -32,7 +26,6 @@ def time_to_ms(ts: str) -> int | None:
     Returns:
         Total milliseconds or None if invalid
     """
-    # accept 00:00:00,000 or 00:00:00.000
     sep = ',' if ',' in ts else '.'
     ts_clean = ts.replace(',', '.')
     try:
@@ -88,59 +81,38 @@ def adjust_line_times(line: str, offset_ms: int) -> str:
     return TIME_RE.sub(repl, line)
 
 
-def main() -> None:
-    """Main entry point for subtitle synchronization."""
-    parser = argparse.ArgumentParser(
-        description="Synchronize subtitle timing by offset (milliseconds)",
-        epilog="Positive values move subtitles forward, negative values backward"
-    )
-    parser.add_argument("path", help="Path to the input .srt file")
-    parser.add_argument(
-        "offset_ms",
-        type=int,
-        help="Offset in milliseconds (e.g., 3000 for +3 seconds)"
-    )
-    parser.add_argument(
-        "--config",
-        help="Optional path to config.yaml file",
-        default=None
-    )
-    args = parser.parse_args()
+def synchronize_srt(input_path: Path, offset_ms: int, output_path: Optional[Path] = None) -> Path:
+    """Synchronize subtitle timing by offset.
 
-    # Load config if specified
-    if args.config:
-        load_config(args.config)
+    Args:
+        input_path: Path to input SRT file
+        offset_ms: Offset in milliseconds
+        output_path: Optional output path (defaults to input_path.stem + '.synced.srt')
 
-    input_path = Path(args.path)
-
+    Returns:
+        Path to synchronized file
+    """
     if not input_path.exists():
-        logger.error(f"File not found: {input_path}")
-        raise SystemExit(1)
+        raise FileNotFoundError(f"File not found: {input_path}")
 
     logger.info(f"Loading: {input_path.name}")
-    logger.info(f"Applying offset: {args.offset_ms} ms")
+    logger.info(f"Applying offset: {offset_ms} ms")
 
     try:
         content = input_path.read_text(encoding='utf-8', errors='ignore')
     except Exception as e:
-        logger.error(f"Failed to read file: {e}")
-        raise SystemExit(1)
+        raise IOError(f"Failed to read file: {e}")
 
     # Process by line to preserve formatting
     lines = content.splitlines(True)
-    new_lines = [adjust_line_times(line, args.offset_ms) for line in lines]
+    new_lines = [adjust_line_times(line, offset_ms) for line in lines]
 
-    out_path = input_path.parent / f"{input_path.stem}.synced{input_path.suffix}"
+    if output_path is None:
+        output_path = input_path.parent / f"{input_path.stem}.synced{input_path.suffix}"
 
     try:
-        out_path.write_text("".join(new_lines), encoding='utf-8')
-        logger.info(f"Synchronized subtitles saved: {out_path.name}")
+        output_path.write_text("".join(new_lines), encoding='utf-8')
+        logger.info(f"Synchronized subtitles saved: {output_path.name}")
+        return output_path
     except Exception as e:
-        logger.error(f"Failed to write file: {e}")
-        raise SystemExit(1)
-
-    raise SystemExit(0)
-
-
-if __name__ == '__main__':
-    main()
+        raise IOError(f"Failed to write file: {e}")

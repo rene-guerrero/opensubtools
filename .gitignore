@@ -65,3 +65,8 @@ config.yaml
 *.en.srt
 *.synced.srt
 *.temp.srt
+
+# Registry
+*.reg
+
+

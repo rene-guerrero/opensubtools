@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from config import get_config
+from subtitles.utils.config import get_config
 
 
 def setup_logging(log_file: Optional[str | Path] = None,

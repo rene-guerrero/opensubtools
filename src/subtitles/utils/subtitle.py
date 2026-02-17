@@ -9,8 +9,8 @@ Provides high-level functions for:
 
 from pathlib import Path
 from typing import Optional, List, Dict
-from translate_utils import is_english_line, translate_batch_text, DEFAULT_DELIM
-from config import get_config
+from subtitles.utils.translate import is_english_line, translate_batch_text, DEFAULT_DELIM
+from subtitles.utils.config import get_config
 from deep_translator import GoogleTranslator
 
 

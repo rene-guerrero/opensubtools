@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Batch translate all video files in a folder and subfolders."""
+"""CLI for batch subtitle processing.
+
+Process all video files in a folder and subfolders to generate subtitles.
+
+Usage:
+  python -m subtitles.cli.batch "path/to/videos/folder"
+"""
+
 import argparse
 import sys
 from pathlib import Path
-from typing import List
 from threading import Lock
 
-try:
-    from config import get_config, load_config
-    from logging_config import get_logger
-    from generate_sub import process_video
-except ImportError as e:
-    print(f"ERROR: Missing required modules: {e}")
-    print("Make sure you're in the correct directory and have all dependencies installed")
-    input("Press Enter to close...")
-    sys.exit(1)
+from subtitles.cli.generate import generate_subtitles_for_video
+from subtitles.utils.config import get_config, load_config
+from subtitles.utils.logging_config import get_logger
+from subtitles.utils.translate import is_srt_spanish
 
 logger = get_logger()
 
@@ -22,7 +23,7 @@ logger = get_logger()
 output_lock = Lock()
 
 
-def find_video_files(folder_path: Path, config) -> List[Path]:
+def find_video_files(folder_path: Path, config) -> list[Path]:
     """Recursively find all video files in folder and subfolders.
 
     Args:
@@ -66,12 +67,11 @@ def process_single_video(video_path: Path) -> tuple[bool, bool]:
         output_srt = video_path.parent / f"{video_path.stem}.srt"
         if output_srt.exists():
             # Check if it's in Spanish using enhanced detection
-            from translate_utils import is_srt_spanish
             if is_srt_spanish(output_srt):
                 # Already has Spanish SRT - skip processing
                 return (True, True)
-        
-        result = process_video(video_path, batch_mode=True)
+
+        result = generate_subtitles_for_video(video_path, output_srt)
         return (result, False)
     except Exception as e:
         logger.error(f"Error processing {video_path.name}: {e}")
@@ -129,6 +129,7 @@ def main() -> None:
     for idx, video_path in enumerate(video_files, 1):
         percent = (idx / len(video_files)) * 100
         print(f"[{idx}/{len(video_files)}] {percent:3.0f}% - {video_path.name}", end=" ")
+        sys.stdout.flush()
 
         success, is_skipped = process_single_video(video_path)
         if is_skipped:
@@ -143,7 +144,7 @@ def main() -> None:
 
     # Print summary
     print(f"\n{'='*60}")
-    print(f"Translation completed!")
+    print(f"Batch processing completed!")
     print(f"  Total: {len(video_files)}")
     print(f"  Successful: {successful}")
     print(f"  Skipped: {skipped} (already had Spanish SRT)")
