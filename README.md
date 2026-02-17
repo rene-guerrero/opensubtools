@@ -9,6 +9,7 @@ A comprehensive Python toolkit for extracting, translating, synchronizing, and m
 - **Synchronize**: Adjust subtitle timing with millisecond precision
 - **Download**: Download subtitles from online sources
 - **Batch Processing**: Process entire folders recursively
+- **GUI Application**: Modern desktop application with intuitive interface for all features
 
 ## Installation
 
@@ -75,6 +76,14 @@ subtitles/
 │       │   ├── translator.py    # Translation engine
 │       │   ├── synchronizer.py  # Time synchronization
 │       │   └── downloader.py    # Subtitle download
+│       ├── gui/                  # GUI Application
+│       │   ├── app.py           # Main application window
+│       │   ├── widgets.py       # Custom widgets
+│       │   └── tabs/            # GUI tabs for each feature
+│       │       ├── generate.py  # Generate subtitles tab
+│       │       ├── translate.py # Translate subtitles tab
+│       │       ├── sync.py      # Synchronize subtitles tab
+│       │       └── batch.py     # Batch processing tab
 │       ├── utils/                # Utilities
 │       │   ├── config.py        # Configuration management
 │       │   ├── logging_config.py # Logging setup
@@ -121,6 +130,51 @@ python -m subtitles.cli.generate "video.mp4"
 python -m subtitles.cli.batch "C:\Users\YourUser\Videos"
 python -m subtitles.cli.extract "C:\Users\YourUser\Videos"
 ```
+
+### GUI Application
+
+Launch the modern desktop application with an intuitive graphical interface:
+
+```bash
+python -m subtitles.gui.app
+```
+
+**Interface Features:**
+- **Easy File Selection**: Click buttons to browse and select files or folders
+- **Dark Theme**: Modern dark mode interface for comfortable viewing
+- **Real-time Progress**: Progress bars and status messages for all operations
+- **Intuitive Design**: Clean tabbed interface organized by feature
+
+The GUI provides four main features accessible through tabs:
+
+#### Generate Tab
+- **Select video file**: Click to browse and select a video file (supports MP4, MKV, AVI, MOV, WMV, FLV, WebM, M4V, MPG, MPEG)
+- **Choose target language**: Select from 15+ languages for translation
+- **Generate**: The application will:
+  1. Look for existing local SRT files
+  2. Extract Spanish subtitles if available
+  3. Extract and translate English subtitles
+  4. Download subtitles from online sources as fallback
+- **Progress tracking**: Real-time progress bar and status updates
+
+#### Translate Tab
+- **Select SRT file**: Choose a subtitle file to translate
+- **Choose target language**: Select destination language
+- **Translate**: Converts subtitles to the selected language with smart batching
+- **Output**: Creates a new file with language code (e.g., `video.es.srt`)
+
+#### Sync Tab
+- **Select SRT file**: Choose subtitle file to synchronize
+- **Adjust timing**: Use the slider for precise millisecond adjustments
+- **Quick presets**: One-click buttons for common adjustments (-5s, -1s, +1s, +5s)
+- **Apply**: Creates a synchronized copy (e.g., `video.synced.srt`)
+
+#### Batch Tab
+- **Select folder**: Choose a directory to process
+- **Recursive processing**: Automatically processes all videos in subfolders
+- **Language selection**: Choose target language for translation
+- **Bulk operations**: Process multiple videos simultaneously with progress tracking
+- **Results summary**: View success/failure statistics
 
 ### Windows Context Menu Integration
 
@@ -219,6 +273,7 @@ ffmpeg-python>=0.2.0
 srt>=3.5.0
 deep-translator>=1.11.0
 pyyaml>=6.0
+customtkinter>=5.2.1
 ```
 
 ## Troubleshooting

@@ -26,7 +26,7 @@ LANGUAGES = {
 
 
 class FileDropTarget(ctk.CTkFrame):
-    """Clickable file selector."""
+    """File selector widget."""
     
     def __init__(
         self,
@@ -54,13 +54,13 @@ class FileDropTarget(ctk.CTkFrame):
         """Create inner widgets."""
         self.button = ctk.CTkButton(
             self,
-            text="Select File",
+            text="Click to Select File",
             command=self.select_file,
             fg_color="transparent",
             border_width=2,
             height=40
         )
-        self.button.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.8)
+        self.button.pack(expand=True, fill="both", padx=5, pady=5)
     
     def select_file(self):
         """Open file dialog."""
@@ -81,7 +81,7 @@ class FileDropTarget(ctk.CTkFrame):
 
 
 class FolderDropTarget(ctk.CTkFrame):
-    """Clickable folder selector."""
+    """Folder selector widget."""
     
     def __init__(
         self,
@@ -107,13 +107,13 @@ class FolderDropTarget(ctk.CTkFrame):
         """Create inner widgets."""
         self.button = ctk.CTkButton(
             self,
-            text="Select Folder",
+            text="Click to Select Folder",
             command=self.select_folder,
             fg_color="transparent",
             border_width=2,
             height=40
         )
-        self.button.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.8)
+        self.button.pack(expand=True, fill="both", padx=5, pady=5)
     
     def select_folder(self):
         """Open folder dialog."""

@@ -104,10 +104,9 @@ class GenerateTab:
         """Generate subtitles (runs in background)."""
         try:
             from subtitles.core.translator import find_and_translate_local_srt
-            from subtitles.core.extractor import extract_english_subtitles, extract_spanish_subtitles
+            from subtitles.core.extractor import extract_english_subtitles, extract_spanish_subtitles, extract_subtitles_by_language
             from subtitles.core.downloader import download_english_subtitle, download_spanish_subtitle
             from subtitles.core.translator import translate_srt_file
-            from deep_translator import GoogleTranslator
             
             video_path = self.selected_file
             target_lang = self.lang_selector.get_language()
@@ -118,57 +117,75 @@ class GenerateTab:
             
             # Try methods in order
             success = False
+            temp_srt = video_path.parent / f"{video_path.stem}.temp.srt"
             
-            # 1. Find local SRT
+            # 1. Find and translate local SRT file
             self.parent.after(0, lambda: self.progress.set(0.3))
             self.parent.after(0, lambda: self.status_label.configure(text="Looking for local .srt file..."))
             
-            if find_and_translate_local_srt(video_path, output_srt):
+            if find_and_translate_local_srt(video_path, output_srt, target_lang=target_lang):
                 success = True
-                
-            # 2. Extract Spanish subtitles
+            
+            # 2. Extract subtitles in target language from video
             if not success:
                 self.parent.after(0, lambda: self.progress.set(0.4))
-                self.parent.after(0, lambda: self.status_label.configure(text="Extracting Spanish subtitles..."))
+                status_msg = f"Extracting {target_lang} subtitles..." if target_lang != 'es' else "Extracting Spanish subtitles..."
+                self.parent.after(0, lambda msg=status_msg: self.status_label.configure(text=msg))
                 
-                temp_srt = video_path.parent / f"{video_path.stem}.temp.srt"
-                if extract_spanish_subtitles(video_path, temp_srt):
-                    temp_srt.rename(output_srt)
+                language_code_map = {
+                    'en': ['en', 'eng'],
+                    'fr': ['fr', 'fra'],
+                    'de': ['de', 'deu'],
+                    'it': ['it', 'ita'],
+                    'pt': ['pt', 'por'],
+                    'ru': ['ru', 'rus'],
+                    'zh': ['zh', 'zho', 'chi'],
+                    'ja': ['ja', 'jpn'],
+                    'ko': ['ko', 'kor'],
+                    'ar': ['ar', 'ara'],
+                    'hi': ['hi', 'hin'],
+                    'nl': ['nl', 'nld'],
+                    'pl': ['pl', 'pol'],
+                    'tr': ['tr', 'tur'],
+                    'es': ['es', 'spa']
+                }
+                lang_codes = language_code_map.get(target_lang, [target_lang])
+                
+                if extract_subtitles_by_language(video_path, output_srt, lang_codes):
                     success = True
-                    
-            # 3. Extract and translate English
+            
+            # 3. Extract English and translate to target language
             if not success:
-                self.parent.after(0, lambda: self.progress.set(0.6))
+                self.parent.after(0, lambda: self.progress.set(0.5))
                 self.parent.after(0, lambda: self.status_label.configure(text="Extracting English subtitles..."))
                 
-                temp_srt = video_path.parent / f"{video_path.stem}.temp.srt"
                 char_count = extract_english_subtitles(video_path, temp_srt)
                 
                 if char_count and char_count > 0:
-                    self.parent.after(0, lambda: self.progress.set(0.7))
-                    self.parent.after(0, lambda: self.status_label.configure(text="Translating..."))
+                    self.parent.after(0, lambda: self.progress.set(0.65))
+                    self.parent.after(0, lambda: self.status_label.configure(text=f"Translating to {target_lang}..."))
                     
-                    if translate_srt_file(temp_srt, output_srt):
+                    if translate_srt_file(temp_srt, output_srt, target_lang=target_lang):
                         temp_srt.unlink(missing_ok=True)
                         success = True
-                        
-            # 4. Download subtitles
+                    else:
+                        temp_srt.unlink(missing_ok=True)
+            
+            # 4. Download and translate if needed
             if not success:
-                self.parent.after(0, lambda: self.progress.set(0.8))
-                self.parent.after(0, lambda: self.status_label.configure(text="Downloading subtitles..."))
+                self.parent.after(0, lambda: self.progress.set(0.75))
+                self.parent.after(0, lambda: self.status_label.configure(text="Downloading English subtitles..."))
                 
-                # Try Spanish first, then English
-                downloaded = download_spanish_subtitle(video_path)
+                downloaded = download_english_subtitle(video_path)
                 if downloaded:
-                    downloaded.rename(output_srt)
-                    success = True
-                else:
-                    downloaded = download_english_subtitle(video_path)
-                    if downloaded:
-                        translator = GoogleTranslator(source='en', target=target_lang)
-                        if translate_srt_file(downloaded, output_srt):
-                            downloaded.unlink(missing_ok=True)
-                            success = True
+                    self.parent.after(0, lambda: self.progress.set(0.85))
+                    self.parent.after(0, lambda: self.status_label.configure(text=f"Translating to {target_lang}..."))
+                    
+                    if translate_srt_file(downloaded, output_srt, target_lang=target_lang):
+                        downloaded.unlink(missing_ok=True)
+                        success = True
+                    else:
+                        downloaded.unlink(missing_ok=True)
                             
             self.parent.after(0, lambda: self.progress.set(1.0))
             
@@ -184,8 +201,9 @@ class GenerateTab:
                 ))
                 
         except Exception as e:
-            self.parent.after(0, lambda: self.status_label.configure(
-                text=f"Error: {str(e)}",
+            error_msg = str(e)
+            self.parent.after(0, lambda msg=error_msg: self.status_label.configure(
+                text=f"Error: {msg}",
                 text_color="#FF5555"
             ))
         finally:

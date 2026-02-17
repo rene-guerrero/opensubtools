@@ -81,6 +81,38 @@ def extract_subtitles(video_path: Path, output_path: Path, stream_index: int = 0
         return False
 
 
+def extract_subtitles_by_language(video_path: Path, output_path: Path, language_codes: List[str]) -> bool:
+    """Extract subtitles in a specific language from video.
+
+    Args:
+        video_path: Path to the video file
+        output_path: Path to save the extracted subtitles
+        language_codes: List of language codes to search for (e.g., ['es', 'spa'])
+
+    Returns:
+        True if extraction succeeded, False otherwise
+    """
+    if not has_embedded_subtitles(video_path):
+        return False
+    
+    subtitle_streams = get_subtitle_streams(video_path)
+    if not subtitle_streams:
+        return False
+    
+    # Find streams matching the language codes
+    matching_streams = [
+        s for s in subtitle_streams
+        if str(s['language']).lower() in [code.lower() for code in language_codes]
+    ]
+    
+    if matching_streams:
+        stream_idx = matching_streams[0]['subtitle_index']
+        logger.info(f"Found subtitle stream in target language (index {stream_idx})")
+        return extract_subtitles(video_path, output_path, stream_idx)
+    
+    return False
+
+
 def extract_english_subtitles(video_path: Path, temp_path: Path) -> Optional[int]:
     """Extract English subtitles from video.
 

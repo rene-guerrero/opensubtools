@@ -24,7 +24,8 @@ from subtitles.core.downloader import (
 )
 from subtitles.core.extractor import (
     extract_english_subtitles,
-    extract_spanish_subtitles
+    extract_spanish_subtitles,
+    extract_subtitles_by_language
 )
 from subtitles.core.translator import find_and_translate_local_srt, translate_srt_file
 from subtitles.utils.config import get_config, load_config
@@ -53,7 +54,7 @@ def validate_video_path(path_str: str) -> Path:
     sys.exit(1)
 
 
-def generate_subtitles_for_video(video_path: Path, output_srt: Path) -> bool:
+def generate_subtitles_for_video(video_path: Path, output_srt: Path, target_lang: str = 'es') -> bool:
     """Try all methods to get subtitles for a video.
 
     Tries in order:
@@ -63,6 +64,11 @@ def generate_subtitles_for_video(video_path: Path, output_srt: Path) -> bool:
     4. Download Spanish subtitles
     5. Download English subtitles and translate
 
+    Args:
+        video_path: Path to the video file
+        output_srt: Path to save the subtitle file
+        target_lang: Target language code (default: 'es' for Spanish)
+
     Returns:
         True if subtitles were generated
     """
@@ -70,24 +76,62 @@ def generate_subtitles_for_video(video_path: Path, output_srt: Path) -> bool:
 
     # Case 1: Try to find and translate local .srt file
     logger.info("Case 1: Searching for local .srt file...")
-    if find_and_translate_local_srt(video_path, output_srt):
+    if find_and_translate_local_srt(video_path, output_srt, target_lang=target_lang):
         logger.info("✅ Found and processed local subtitles")
         return True
 
-    # Case 2: Try to extract Spanish subtitles embedded in video
-    logger.info("Case 2: Attempting to extract Spanish subtitles...")
-    if extract_spanish_subtitles(video_path, output_srt):
-        logger.info("✅ Spanish subtitles extracted successfully")
-        return True
+    # Case 2: Try to extract subtitles in target language if available
+    if target_lang != 'es':
+        logger.info(f"Case 2: Attempting to extract {target_lang} subtitles...")
+        # Try common language codes for the target language
+        language_code_map = {
+            'es': ['es', 'spa'],
+            'en': ['en', 'eng'],
+            'fr': ['fr', 'fra'],
+            'de': ['de', 'deu'],
+            'it': ['it', 'ita'],
+            'pt': ['pt', 'por'],
+            'ru': ['ru', 'rus'],
+            'zh': ['zh', 'zho', 'chi'],
+            'ja': ['ja', 'jpn'],
+            'ko': ['ko', 'kor'],
+            'ar': ['ar', 'ara'],
+            'hi': ['hi', 'hin'],
+            'nl': ['nl', 'nld'],
+            'pl': ['pl', 'pol'],
+            'tr': ['tr', 'tur']
+        }
+        lang_codes = language_code_map.get(target_lang, [target_lang])
+        if extract_subtitles_by_language(video_path, output_srt, lang_codes):
+            logger.info(f"✅ {target_lang} subtitles extracted successfully")
+            return True
 
-    # Case 3: Try to extract English subtitles and translate
-    logger.info("Case 3: Attempting to extract and translate English subtitles...")
+    # Case 3: Try to extract Spanish subtitles embedded in video
+    logger.info("Case 3: Attempting to extract Spanish subtitles...")
+    if extract_spanish_subtitles(video_path, output_srt):
+        if target_lang == 'es':
+            logger.info("✅ Spanish subtitles extracted successfully")
+            return True
+        else:
+            # Spanish found but need different language, translate it
+            logger.info(f"Spanish subtitles found, translating to {target_lang}...")
+            temp_srt = video_path.parent / f"{video_path.stem}.temp_spanish.srt"
+            output_srt.rename(temp_srt)
+            if translate_srt_file(temp_srt, output_srt, target_lang=target_lang):
+                temp_srt.unlink(missing_ok=True)
+                logger.info("✅ Spanish subtitles translated")
+                return True
+            else:
+                temp_srt.rename(output_srt)
+
+    # Case 4: Try to extract English subtitles and translate
+    logger.info("Case 4: Attempting to extract and translate English subtitles...")
     temp_srt = video_path.parent / f"{video_path.stem}.temp_extracted.srt"
     try:
         char_count = extract_english_subtitles(video_path, temp_srt)
         if char_count and char_count > 0:
-            logger.info("English subtitles extracted, translating...")
-            if translate_srt_file(temp_srt, output_srt):
+            logger.info(f"English subtitles extracted, translating to {target_lang}...")
+            if translate_srt_file(temp_srt, output_srt, target_lang=target_lang):
                 logger.info("✅ Subtitles extracted and translated")
                 temp_srt.unlink(missing_ok=True)
                 return True
@@ -96,27 +140,40 @@ def generate_subtitles_for_video(video_path: Path, output_srt: Path) -> bool:
     finally:
         temp_srt.unlink(missing_ok=True)
 
-    # Case 4: Try to download Spanish subtitles
-    logger.info("Case 4: Attempting to download Spanish subtitles...")
+    # Case 5: Try to download Spanish subtitles
+    logger.info("Case 5: Attempting to download Spanish subtitles...")
     spanish_srt = download_spanish_subtitle(video_path)
     if spanish_srt:
         logger.info(f"Spanish subtitles downloaded: {spanish_srt.name}")
         if spanish_srt != output_srt:
-            spanish_srt.rename(output_srt)
-        logger.info("✅ Subtitles generated successfully")
-        return True
+            if target_lang == 'es':
+                spanish_srt.rename(output_srt)
+                logger.info("✅ Subtitles generated successfully")
+                return True
+            else:
+                # Spanish found but need different language, translate it
+                logger.info(f"Translating to {target_lang}...")
+                if translate_srt_file(spanish_srt, output_srt, target_lang=target_lang):
+                    spanish_srt.unlink(missing_ok=True)
+                    logger.info("✅ Subtitles generated and translated")
+                    return True
+                else:
+                    spanish_srt.unlink(missing_ok=True)
+        else:
+            logger.info("✅ Subtitles generated successfully")
+            return True
 
     logger.warning("Spanish subtitles not found online")
 
-    # Case 5: Try to download English subtitles
-    logger.info("Case 5: Attempting to download English subtitles...")
+    # Case 6: Try to download English subtitles
+    logger.info("Case 6: Attempting to download English subtitles...")
     english_srt = download_english_subtitle(video_path)
 
     if english_srt:
         logger.info(f"English subtitles downloaded: {english_srt.name}")
-        logger.info("Translating to Spanish...")
+        logger.info(f"Translating to {target_lang}...")
         try:
-            translate_srt_file(english_srt, output_srt)
+            translate_srt_file(english_srt, output_srt, target_lang=target_lang)
             english_srt.unlink(missing_ok=True)
             logger.info("✅ Subtitles generated and translated")
             return True
@@ -132,10 +189,15 @@ def generate_subtitles_for_video(video_path: Path, output_srt: Path) -> bool:
 def main() -> None:
     """Main entry point for subtitle generation."""
     parser = argparse.ArgumentParser(
-        description="Generate Spanish subtitles for a video file",
+        description="Generate subtitles for a video file",
         epilog="Supports: download, extraction, and translation"
     )
     parser.add_argument("path", help="Path to the video file")
+    parser.add_argument(
+        "--language", "-l",
+        help="Target language code (default: 'es' for Spanish). Supported: es, en, fr, de, it, pt, ru, zh, ja, ko, ar, hi, nl, pl, tr",
+        default='es'
+    )
     parser.add_argument(
         "--config",
         help="Optional path to config.yaml file",
@@ -160,17 +222,18 @@ def main() -> None:
 
     output_srt = video_path.parent / f"{video_path.stem}.srt"
 
-    # Check if already has Spanish subtitles
+    # Check if already has subtitles in target language
     if output_srt.exists():
-        if is_srt_spanish(output_srt):
+        if args.language == 'es' and is_srt_spanish(output_srt):
             logger.info("✅ Video already has Spanish subtitles")
             sys.exit(0)
         else:
-            logger.warning("Existing subtitles found but not in Spanish")
+            logger.warning("Existing subtitles found")
 
     logger.info(f"Generating subtitles for: {video_path.name}")
+    logger.info(f"Target language: {args.language}")
 
-    if generate_subtitles_for_video(video_path, output_srt):
+    if generate_subtitles_for_video(video_path, output_srt, target_lang=args.language):
         logger.info("✅ Subtitle generation complete")
         sys.exit(0)
     else:

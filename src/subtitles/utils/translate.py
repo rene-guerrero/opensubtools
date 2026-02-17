@@ -233,17 +233,17 @@ def translate_batch_text(texts: List[str], translator, max_retries: int = 3, del
 
             return result
 
-        except requests.exceptions.Timeout:
+        except requests.exceptions.Timeout as e:
             if attempt == max_retries - 1:
-                return texts
+                raise Exception(f"Translation timeout after {max_retries} retries") from e
 
-        except requests.exceptions.ConnectionError:
+        except requests.exceptions.ConnectionError as e:
             if attempt == max_retries - 1:
-                return texts
+                raise Exception(f"Connection error after {max_retries} retries") from e
 
-        except Exception:
+        except Exception as e:
             if attempt == max_retries - 1:
-                return texts
+                raise Exception(f"Translation failed after {max_retries} retries: {str(e)}") from e
 
         # Exponential backoff: 1s, 2s, 4s
         if attempt < max_retries - 1:
@@ -399,8 +399,10 @@ def translate_batches_parallel(batches: List[List[str]], translator,
                 completed += 1
                 if progress_callback:
                     progress_callback(completed, len(batches))
-            except Exception:
-                translated_batches[idx] = batches[idx]  # Fallback to original
+            except Exception as e:
+                # Log and raise the actual error instead of silencing it
+                logger.error(f"Batch {idx} translation failed: {type(e).__name__}: {str(e)}")
+                raise
 
     return translated_batches
 

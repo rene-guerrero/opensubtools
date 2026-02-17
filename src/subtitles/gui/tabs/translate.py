@@ -109,7 +109,7 @@ class TranslateTab:
             self.parent.after(0, lambda: self.progress.set(0.5))
             
             # Translate using the core function
-            success = translate_srt_file(input_file, output_file)
+            success = translate_srt_file(input_file, output_file, target_lang=target_lang)
             
             self.parent.after(0, lambda: self.progress.set(1.0))
             

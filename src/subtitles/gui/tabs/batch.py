@@ -161,7 +161,7 @@ class BatchTab:
                 method_success = False
                 
                 # 1. Local SRT
-                if find_and_translate_local_srt(video, output_srt):
+                if find_and_translate_local_srt(video, output_srt, target_lang=target_lang):
                     method_success = True
                     
                 # 2. Extract Spanish
@@ -176,7 +176,7 @@ class BatchTab:
                     temp_srt = video.parent / f"{video.stem}.temp.srt"
                     char_count = extract_english_subtitles(video, temp_srt)
                     if char_count and char_count > 0:
-                        if translate_srt_file(temp_srt, output_srt):
+                        if translate_srt_file(temp_srt, output_srt, target_lang=target_lang):
                             temp_srt.unlink(missing_ok=True)
                             method_success = True
                             
@@ -189,7 +189,7 @@ class BatchTab:
                     else:
                         downloaded = download_english_subtitle(video)
                         if downloaded:
-                            if translate_srt_file(downloaded, output_srt):
+                            if translate_srt_file(downloaded, output_srt, target_lang=target_lang):
                                 downloaded.unlink(missing_ok=True)
                                 method_success = True
                                 
