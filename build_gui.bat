@@ -7,8 +7,12 @@ echo Building SubtitleTools.exe...
 REM Install build dependencies
 pip install pyinstaller customtkinter
 
-REM Build the executable
-pyinstaller --onefile --windowed --name SubtitleTools main.py
+REM Clean previous builds
+if exist dist rmdir /s /q dist
+if exist build rmdir /s /q build
+
+REM Build using spec file (includes tkinterdnd2 libraries)
+pyinstaller SubtitleTools.spec --clean
 
 echo.
 echo Build complete!
