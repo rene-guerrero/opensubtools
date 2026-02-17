@@ -1,13 +1,13 @@
-# Extractor y Traductor de Subtítulos
+# Subtitle Extractor and Translator
 
-Script de Python para extraer subtítulos embebidos de archivos de video, traducirlos del inglés al español y guardarlos como archivos `.srt`.
+Python script to extract embedded subtitles from video files, translate them from English to Spanish, and save them as `.srt` files.
 
-## Requisitos
+## Requirements
 
-- Python 3.12
-- FFmpeg (debe estar instalado y en el PATH)
+- Python 3.12+
+- FFmpeg (must be installed and in PATH)
 
-### Instalar FFmpeg
+### Installing FFmpeg
 
 **Windows:**
 ```bash
@@ -24,10 +24,10 @@ brew install ffmpeg
 sudo apt install ffmpeg
 ```
 
-## Instalación
+## Installation
 
-1. Clonar o descargar este repositorio
-2. Crear y activar el entorno virtual:
+1. Clone or download this repository
+2. Create and activate virtual environment:
 ```bash
 py -3.12 -m venv venv
 # Windows:
@@ -36,28 +36,28 @@ venv\Scripts\activate
 source venv/bin/activate
 ```
 
-3. Instalar dependencias:
+3. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-## Uso
+## Usage
 
 ```bash
-python extract_and_translate.py <ruta_de_la_carpeta>
+python extract_and_translate.py <folder_path>
 ```
 
-### Opciones
+### Options
 
-- `--overwrite`: Sobrescribir archivos `.srt` existentes
+- `--overwrite`: Overwrite existing `.srt` files
 
-### Ejemplo
+### Example
 
 ```bash
-python extract_and_translate.py "C:\Users\TuUsuario\Videos\MisPeliculas"
+python extract_and_translate.py "C:\Users\YourUser\Videos\MyMovies"
 ```
 
-## Formatos soportados
+## Supported Formats
 
 - .mp4
 - .mkv
@@ -68,18 +68,18 @@ python extract_and_translate.py "C:\Users\TuUsuario\Videos\MisPeliculas"
 - .webm
 - .m4v
 
-## Características
+## Features
 
-- ✅ Detecta automáticamente subtítulos embebidos
-- ✅ Extrae subtítulos en formato SRT
-- ✅ Traduce del inglés al español usando Google Translate
-- ✅ Preserva los tiempos originales de los subtítulos
-- ✅ Procesa múltiples videos en batch
-- ✅ Muestra progreso con barras de progreso
-- ✅ Manejo de errores y reintentos en la traducción
+- ✅ Automatically detects embedded subtitles
+- ✅ Extracts subtitles in SRT format
+- ✅ Translates from English to Spanish using Google Translate
+- ✅ Preserves original subtitle timing
+- ✅ Processes multiple videos in batch
+- ✅ Shows progress with progress bars
+- ✅ Error handling and retry logic for translations
 
-## Notas
+## Notes
 
-- La traducción se realiza mediante la API gratuita de Google Translate
-- Puede haber límites de rate en la traducción para archivos muy grandes
-- Los subtítulos traducidos se guardan con el mismo nombre del video pero con extensión `.es.srt`
+- Translation is done using the free Google Translate API
+- There may be rate limits for very large files
+- Translated subtitles are saved with the same video name but with `.es.srt` extension

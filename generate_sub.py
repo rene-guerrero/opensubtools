@@ -367,6 +367,8 @@ def extract_and_translate_embedded_english_subtitles(video_path: Path, output_sr
 
 def find_and_translate_local_srt(video_path: Path, output_srt: Path) -> bool:
     """Search for .srt file with same name in folder. Translate if in English."""
+    from translate_utils import is_srt_spanish
+    
     logger.info("Searching for local .srt file...")
 
     # Look for .srt with the same base name
@@ -378,18 +380,15 @@ def find_and_translate_local_srt(video_path: Path, output_srt: Path) -> bool:
 
     logger.info(f"Found: {possible_srt.name}")
 
-    # Check if it's in English
-    text = possible_srt.read_text(encoding="utf-8", errors="ignore")
-    lines = text.splitlines(True)
-    eng_indices = [i for i, line in enumerate(lines) if is_english_line(line)]
-
-    if not eng_indices:
+    # Check if it's in Spanish using enhanced detection (handles XML/HTML tags)
+    if is_srt_spanish(possible_srt):
         logger.info("File is in Spanish, copying...")
+        text = possible_srt.read_text(encoding="utf-8", errors="ignore")
         output_srt.write_text(text, encoding="utf-8")
         return True
 
-    logger.info(f"Detected English content in {len(eng_indices)} lines")
-    logger.info("Translating to Spanish...")
+    # File appears to be in English, translate it
+    logger.info("File appears to be in English, translating...")
     try:
         translate_srt(possible_srt, output_srt)
         logger.info(f"Saved as: {output_srt.name}")

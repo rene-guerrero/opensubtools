@@ -73,6 +73,112 @@ def is_english_line_enhanced(line: str) -> bool:
     return False
 
 
+def clean_subtitle_text(text: str) -> str:
+    """Remove XML/HTML tags and SSA/ASS formatting from subtitle text.
+    
+    Examples:
+        {\\an5}<font face="Paper Johnny Eins" size="36" color="#ffb504"></font>ge
+        -> ge
+        
+        <i>Hello</i> <b>world</b>
+        -> Hello world
+    """
+    # Remove SSA/ASS tags like {\an5}, {\pos(100,100)}, etc.
+    text = re.sub(r'\{[^}]*\}', '', text)
+    
+    # Remove XML/HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+    
+    return text
+
+
+def is_srt_spanish(srt_path: Path) -> bool:
+    """Check if an SRT file is in Spanish (not English).
+    
+    Returns True if the file is determined to be in Spanish.
+    Uses multiple heuristics:
+    - Presence of Spanish accents (áéíóúñ)
+    - Common Spanish words
+    - Absence of clear English indicators
+    
+    IMPORTANT: Strips XML/HTML tags before analysis to avoid false positives
+    from English attribute names like face="Arial", color="#fff", etc.
+    """
+    try:
+        text = srt_path.read_text(encoding="utf-8", errors="ignore")
+        lines = text.splitlines()
+        
+        spanish_indicators = 0
+        english_indicators = 0
+        total_text_lines = 0
+        
+        # Spanish-specific patterns
+        spanish_words = [
+            ' el ', ' la ', ' los ', ' las ', ' un ', ' una ', ' es ', ' son ',
+            ' está ', ' están ', ' fue ', ' fueron ', ' con ', ' por ', ' para ',
+            ' que ', ' quien ', ' donde ', ' cuando ', ' como ', ' pero ', ' más ',
+            ' muy ', ' bien ', ' aquí ', ' allí ', ' ahora ', ' después ', ' antes',
+            ' este ', ' esta ', ' estos ', ' estas ', ' ese ', ' esa ', ' eso ',
+            ' había ', ' tenía ', ' puede ', ' puedes ', ' podemos ', ' debemos ',
+            ' gracias ', ' por favor ', ' buenos días ', ' buenas noches ', ' hola ',
+            ' señor ', ' señora ', ' señorita ', ' doctor ', ' doctora ', ' claro ',
+            ' entiendo ', ' comprendo ', ' verdad ', ' seguro ', ' todo ',
+            ' nada ', ' algo ', ' alguien ', ' nadie ', ' siempre ', ' nunca ',
+            ' también ', ' tampoco ', ' quizás ', ' tal vez ', ' mejor ', ' peor ',
+            ' años ', ' día ', ' tiempo ', ' vida ', ' manera ', ' forma ',
+            ' casa ', ' trabajo ', ' mundo ', ' persona ', ' lugar ', ' momento '
+        ]
+        
+        for line in lines:
+            s = line.strip()
+            if not s or s.isdigit() or '-->' in s:
+                continue  # Skip empty lines, sequence numbers, timestamps
+            
+            # Clean the line: remove XML/HTML/SSA tags
+            clean_text = clean_subtitle_text(s)
+            if not clean_text.strip():
+                continue  # Skip if line is only tags
+            
+            total_text_lines += 1
+            low = clean_text.lower()
+            
+            # Check for Spanish accents (strong indicator)
+            if any(c in clean_text for c in 'áéíóúñüÁÉÍÓÚÑÜ'):
+                spanish_indicators += 3  # Strong indicator
+            
+            # Check for common Spanish words
+            for word in spanish_words:
+                if word in low:
+                    spanish_indicators += 1
+                    break
+            
+            # Check for English indicators (common English words not in Spanish)
+            english_words = [' the ', ' and ', ' to ', ' of ', ' in ', ' is ', ' are ', ' was ', ' were ',
+                           ' this ', ' that ', ' with ', ' for ', ' it ', ' you ', ' he ', ' she ']
+            if any(word in low for word in english_words):
+                english_indicators += 2
+        
+        # Decision logic
+        if total_text_lines == 0:
+            return False  # Empty or invalid SRT
+        
+        # If we found Spanish indicators and few/no English indicators
+        if spanish_indicators > 0 and english_indicators == 0:
+            return True
+        
+        # If Spanish indicators outweigh English indicators significantly
+        if spanish_indicators > english_indicators * 1.5:
+            return True
+        
+        # If significant portion of lines have Spanish accents
+        if spanish_indicators >= 3 and english_indicators < 3:
+            return True
+        
+        return False
+    except Exception:
+        return False
+
+
 # Keep old implementation as backup
 def is_english_line(line: str) -> bool:
     """Original English line detection (simple version, kept for compatibility)."""
@@ -331,7 +437,7 @@ def get_subtitle_streams(video_path: Path) -> List[Dict]:
                     'subtitle_index': subtitle_index,
                     'codec': s.get('codec_name', 'unknown'),
                     'language': s.get('tags', {}).get('language', 'unknown'),
-                    'title': s.get('tags', {}).get('title', f'Subtítulo {subtitle_index}')
+                    'title': s.get('tags', {}).get('title', f'Subtitle {subtitle_index}')
                 })
         return subtitle_streams
     except Exception:

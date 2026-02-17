@@ -1,15 +1,25 @@
 #!/usr/bin/env python3
 """Batch translate all video files in a folder and subfolders."""
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 from typing import List
+from threading import Lock
 
-from config import get_config, load_config
-from logging_config import get_logger
+try:
+    from config import get_config, load_config
+    from logging_config import get_logger
+    from generate_sub import process_video
+except ImportError as e:
+    print(f"ERROR: Missing required modules: {e}")
+    print("Make sure you're in the correct directory and have all dependencies installed")
+    input("Press Enter to close...")
+    sys.exit(1)
 
 logger = get_logger()
+
+# Global lock for synchronized output
+output_lock = Lock()
 
 
 def find_video_files(folder_path: Path, config) -> List[Path]:
@@ -23,12 +33,16 @@ def find_video_files(folder_path: Path, config) -> List[Path]:
         List of video file paths
     """
     video_files = []
-    supported_formats = tuple(f".{fmt}" for fmt in config.video_formats)
+
+    # Ensure formats have dots
+    formats = [f if f.startswith('.') else f'.{f}' for f in config.video_formats]
+    supported_formats = tuple(formats)
 
     try:
         for video_file in folder_path.rglob("*"):
             if video_file.is_file() and video_file.suffix.lower() in supported_formats:
                 video_files.append(video_file)
+
     except Exception as e:
         logger.error(f"Error scanning folder: {e}")
         return []
@@ -36,29 +50,32 @@ def find_video_files(folder_path: Path, config) -> List[Path]:
     return sorted(video_files)
 
 
-def translate_video(video_path: Path) -> bool:
-    """Translate a single video file using generate_sub.py.
+def process_single_video(video_path: Path) -> tuple[bool, bool]:
+    """Process a single video file.
 
     Args:
         video_path: Path to video file
 
     Returns:
-        True if successful, False otherwise
+        Tuple of (success: bool, skipped: bool)
+        - success: True if subtitles were generated/available
+        - skipped: True if video was skipped (already has Spanish SRT)
     """
     try:
-        result = subprocess.run(
-            [sys.executable, str(Path(__file__).parent / "generate_sub.py"), str(video_path)],
-            capture_output=True,
-            text=True,
-            timeout=600  # 10 minutes timeout per video
-        )
-        return result.returncode == 0
-    except subprocess.TimeoutExpired:
-        logger.error(f"Timeout processing: {video_path.name}")
-        return False
+        # Check if SRT already exists and is in Spanish
+        output_srt = video_path.parent / f"{video_path.stem}.srt"
+        if output_srt.exists():
+            # Check if it's in Spanish using enhanced detection
+            from translate_utils import is_srt_spanish
+            if is_srt_spanish(output_srt):
+                # Already has Spanish SRT - skip processing
+                return (True, True)
+        
+        result = process_video(video_path, batch_mode=True)
+        return (result, False)
     except Exception as e:
         logger.error(f"Error processing {video_path.name}: {e}")
-        return False
+        return (False, False)
 
 
 def main() -> None:
@@ -87,11 +104,11 @@ def main() -> None:
     # Validate folder
     folder_path = Path(args.folder)
     if not folder_path.exists():
-        logger.error(f"Folder not found: {folder_path}")
+        print(f"ERROR: Folder not found: {folder_path}")
         sys.exit(1)
 
     if not folder_path.is_dir():
-        logger.error(f"Not a folder: {folder_path}")
+        print(f"ERROR: Not a folder: {folder_path}")
         sys.exit(1)
 
     # Find all video files
@@ -102,25 +119,34 @@ def main() -> None:
         print("No video files found")
         sys.exit(0)
 
-    print(f"Found {len(video_files)} video file(s)\n")
+    print(f"Found {len(video_files)} video(s)\n")
 
     # Process each video
     successful = 0
+    skipped = 0
     failed = 0
 
     for idx, video_path in enumerate(video_files, 1):
-        print(f"[{idx}/{len(video_files)}] Processing: {video_path.name}")
+        percent = (idx / len(video_files)) * 100
+        print(f"[{idx}/{len(video_files)}] {percent:3.0f}% - {video_path.name}", end=" ")
 
-        if translate_video(video_path):
+        success, is_skipped = process_single_video(video_path)
+        if is_skipped:
+            skipped += 1
+            print("[SKIPPED - Already has Spanish SRT]")
+        elif success:
             successful += 1
+            print("[OK]")
         else:
             failed += 1
+            print("[FAILED]")
 
     # Print summary
     print(f"\n{'='*60}")
-    print(f"Batch translation complete!")
-    print(f"  Total videos: {len(video_files)}")
+    print(f"Translation completed!")
+    print(f"  Total: {len(video_files)}")
     print(f"  Successful: {successful}")
+    print(f"  Skipped: {skipped} (already had Spanish SRT)")
     print(f"  Failed: {failed}")
     print(f"{'='*60}\n")
 
@@ -129,4 +155,14 @@ def main() -> None:
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"\n{'='*60}")
+        print(f"ERROR: {e}")
+        print(f"{'='*60}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        print("\nPress Enter to close...")
+        input()
