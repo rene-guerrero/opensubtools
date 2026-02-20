@@ -38,10 +38,10 @@ def download_subtitle(video_path: Path, language: str, timeout: int = 30) -> Opt
 
     try:
         result = subprocess.run(
-            cmd, 
-            capture_output=True, 
-            text=True, 
-            cwd=output_dir, 
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=output_dir,
             timeout=timeout
         )
         logger.debug(f"Subliminal output: {result.stdout}")
@@ -55,41 +55,25 @@ def download_subtitle(video_path: Path, language: str, timeout: int = 30) -> Opt
         logger.debug(f"Subliminal error: {e}")
         return None
 
-    # Subliminal typically names the file with .lang.srt extension
     expected_srt = output_dir / f"{video_path.stem}.{language}.srt"
+    logger.info(f"Looking for: {expected_srt.name}")
+    
     if expected_srt.exists():
-        logger.info(f"Downloaded: {expected_srt.name}")
-        return expected_srt
+        final_srt = output_dir / f"{video_path.stem}.srt"
+        expected_srt.rename(final_srt)
+        logger.info(f"Downloaded: {final_srt.name}")
+        return final_srt
 
-    # Fallback: look for any .srt file with similar name
-    for srt_file in output_dir.glob(f"{video_path.stem}*.srt"):
-        if srt_file != expected_srt:
-            logger.info(f"Found alternative: {srt_file.name}")
-        return srt_file
+    # Check for any srt files
+    srt_files = list(output_dir.glob(f"{video_path.stem}*.srt"))
+    logger.info(f"Found SRT files: {[f.name for f in srt_files]}")
+    
+    for srt_file in srt_files:
+        if srt_file.name != f"{video_path.stem}.srt":
+            final_srt = output_dir / f"{video_path.stem}.srt"
+            srt_file.rename(final_srt)
+            logger.info(f"Found alternative: {final_srt.name}")
+            return final_srt
 
-    logger.debug(f"No subtitles found for {language}")
+    logger.info(f"No subtitles found for {language}")
     return None
-
-
-def download_english_subtitle(video_path: Path) -> Optional[Path]:
-    """Download English subtitles for video.
-
-    Args:
-        video_path: Path to video file
-
-    Returns:
-        Path to downloaded subtitle or None if failed
-    """
-    return download_subtitle(video_path, "en")
-
-
-def download_spanish_subtitle(video_path: Path) -> Optional[Path]:
-    """Download Spanish subtitles for video.
-
-    Args:
-        video_path: Path to video file
-
-    Returns:
-        Path to downloaded subtitle or None if failed
-    """
-    return download_subtitle(video_path, "es")

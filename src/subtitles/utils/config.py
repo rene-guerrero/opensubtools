@@ -39,12 +39,25 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "english": ["eng", "en", "english"],
             "spanish": ["spa", "es", "spanish"]
         }
-    },
-    "output": {
-        "use_emoji": True,
-        "log_file": None,
-        "verbose": False
     }
+}
+
+LANGUAGE_CODE_MAP = {
+    'es': ['es', 'spa'],
+    'en': ['en', 'eng'],
+    'fr': ['fr', 'fra'],
+    'de': ['de', 'deu'],
+    'it': ['it', 'ita'],
+    'pt': ['pt', 'por'],
+    'ru': ['ru', 'rus'],
+    'zh': ['zh', 'zho', 'chi'],
+    'ja': ['ja', 'jpn'],
+    'ko': ['ko', 'kor'],
+    'ar': ['ar', 'ara'],
+    'hi': ['hi', 'hin'],
+    'nl': ['nl', 'nld'],
+    'pl': ['pl', 'pol'],
+    'tr': ['tr', 'tur']
 }
 
 

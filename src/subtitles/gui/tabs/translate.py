@@ -8,6 +8,9 @@ import logging
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from subtitles.gui.widgets import FileDropTarget, LanguageSelector
+from subtitles.utils.logging_config import get_logger
+
+logger = get_logger()
 
 
 class TextboxLogHandler(logging.Handler):
@@ -149,7 +152,8 @@ class TranslateTab:
 
             input_file = self.selected_file
             target_lang = self.lang_selector.get_language()
-            output_file = input_file.parent / f"{input_file.stem}.{target_lang}{input_file.suffix}"
+            
+            output_file = input_file.parent / f"{input_file.stem}.srt"
 
             self.parent.after(0, lambda: self.status_label.configure(text="Translating..."))
             self.parent.after(0, lambda: self.progress.set(0.5))

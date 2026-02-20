@@ -151,8 +151,9 @@ class GenerateTab:
         try:
             from subtitles.core.translator import find_and_translate_local_srt
             from subtitles.core.extractor import extract_english_subtitles, extract_subtitles_by_language
-            from subtitles.core.downloader import download_english_subtitle
+            from subtitles.core.downloader import download_subtitle
             from subtitles.core.translator import translate_srt_file
+            from subtitles.utils.config import LANGUAGE_CODE_MAP
 
             video_path = self.selected_file
             target_lang = self.lang_selector.get_language()
@@ -174,27 +175,10 @@ class GenerateTab:
             # 2. Extract subtitles in target language from video
             if not success:
                 self.parent.after(0, lambda: self.progress.set(0.4))
-                status_msg = f"Extracting {target_lang} subtitles..." if target_lang != 'es' else "Extracting Spanish subtitles..."
+                status_msg = f"Extracting {target_lang} subtitles..."
                 self.parent.after(0, lambda msg=status_msg: self.status_label.configure(text=msg))
 
-                language_code_map = {
-                    'en': ['en', 'eng'],
-                    'fr': ['fr', 'fra'],
-                    'de': ['de', 'deu'],
-                    'it': ['it', 'ita'],
-                    'pt': ['pt', 'por'],
-                    'ru': ['ru', 'rus'],
-                    'zh': ['zh', 'zho', 'chi'],
-                    'ja': ['ja', 'jpn'],
-                    'ko': ['ko', 'kor'],
-                    'ar': ['ar', 'ara'],
-                    'hi': ['hi', 'hin'],
-                    'nl': ['nl', 'nld'],
-                    'pl': ['pl', 'pol'],
-                    'tr': ['tr', 'tur'],
-                    'es': ['es', 'spa']
-                }
-                lang_codes = language_code_map.get(target_lang, [target_lang])
+                lang_codes = LANGUAGE_CODE_MAP.get(target_lang, [target_lang])
 
                 if extract_subtitles_by_language(video_path, output_srt, lang_codes):
                     success = True
@@ -220,12 +204,26 @@ class GenerateTab:
                     else:
                         temp_srt.unlink(missing_ok=True)
 
-            # 4. Download and translate if needed
+            # 4. Download subtitles in target language
+            if not success:
+                self.parent.after(0, lambda: self.progress.set(0.75))
+                self.parent.after(0, lambda: self.status_label.configure(text=f"Downloading {target_lang} subtitles..."))
+
+                downloaded = download_subtitle(video_path, target_lang)
+                if downloaded:
+                    self.parent.after(0, lambda: self.progress.set(1.0))
+                    self.parent.after(0, lambda: self.status_label.configure(
+                        text=f"Saved: {output_srt.name}",
+                        text_color="#2FA572"
+                    ))
+                    success = True
+
+            # 5. Download and translate if needed
             if not success:
                 self.parent.after(0, lambda: self.progress.set(0.75))
                 self.parent.after(0, lambda: self.status_label.configure(text="Downloading English subtitles..."))
 
-                downloaded = download_english_subtitle(video_path)
+                downloaded = download_subtitle(video_path, "en")
                 if downloaded:
                     self.parent.after(0, lambda: self.progress.set(0.85))
                     self.parent.after(0, lambda: self.status_label.configure(text=f"Translating to {target_lang}..."))
