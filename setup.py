@@ -1,9 +1,9 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="subtitles",
+    name="opensubtools",
     version="1.0.0",
-    description="Subtitle extraction, translation, and synchronization toolkit",
+    description="OpenSubTools - Subtitle extraction, translation, and synchronization toolkit",
     author="Your Name",
     author_email="your.email@example.com",
     packages=find_packages(where="src"),
@@ -14,12 +14,14 @@ setup(
         "deep-translator>=1.11.0",
         "pyyaml>=6.0",
         "customtkinter>=5.2.0",
+        "subliminal>=2.1.0",
+        "tkinterdnd2>=0.3.0",
     ],
     python_requires=">=3.12",
     entry_points={
         "console_scripts": [
-            "subtitles=subtitles.__main__:main",
-            "subtitles-gui=main:main",
+            "opensubtools=opensubtools.__main__:main",
+            "opensubtools-gui=main:main",
         ],
     },
     classifiers=[

@@ -1,6 +1,6 @@
 ffmpeg-python==0.2.0
-srt==3.5.3
 deep-translator==1.11.4
 PyYAML==6.0.3
 customtkinter==5.2.1
-
+subliminal==2.5.0
+tkinterdnd2==0.3.0

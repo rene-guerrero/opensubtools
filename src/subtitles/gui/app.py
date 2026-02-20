@@ -1,4 +1,4 @@
-"""GUI application for Subtitle Tools."""
+"""GUI application for OpenSubTools."""
 import customtkinter as ctk
 import sys
 from pathlib import Path
@@ -23,9 +23,34 @@ class SubtitleApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.TkdndVersion = TkinterDnD._require(self)
 
         # Window configuration
-        self.title("Subtitle Tools")
+        self.title("OpenSubTools")
         self.geometry("380x500")
         self.resizable(False, False)
+
+        # Set window icon
+        # Try multiple locations for icon (development and compiled exe)
+        possible_icon_paths = []
+
+        if getattr(sys, 'frozen', False):
+            # Running as compiled exe
+            base_path = getattr(sys, '_MEIPASS', Path(sys.executable).parent)
+            possible_icon_paths.append(Path(base_path) / "subtitles" / "gui" / "icon.ico")
+            possible_icon_paths.append(Path(base_path) / "icon.ico")
+        else:
+            # Running as .py
+            possible_icon_paths.append(Path(__file__).parent / "icon.ico")
+
+        possible_icon_paths.append(Path(sys.executable).parent / "icon.ico")
+
+        icon_set = False
+        for icon_path in possible_icon_paths:
+            if icon_path.exists():
+                try:
+                    self.iconbitmap(str(icon_path))
+                    icon_set = True
+                    break
+                except Exception:
+                    pass
 
         # Configure grid
         self.grid_columnconfigure(0, weight=1)

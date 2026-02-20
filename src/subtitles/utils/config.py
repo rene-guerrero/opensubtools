@@ -54,6 +54,7 @@ LANGUAGE_CODE_MAP = {
     'ja': ['ja', 'jpn'],
     'ko': ['ko', 'kor'],
     'ar': ['ar', 'ara'],
+    'he': ['he', 'heb'],
     'hi': ['hi', 'hin'],
     'nl': ['nl', 'nld'],
     'pl': ['pl', 'pol'],

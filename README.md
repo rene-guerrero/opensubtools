@@ -1,4 +1,4 @@
-# Subtitle Tools
+# OpenSubTools
 
 A comprehensive Python toolkit for extracting, translating, synchronizing, and managing subtitles from video files.
 
@@ -16,9 +16,12 @@ A comprehensive Python toolkit for extracting, translating, synchronizing, and m
 ### Prerequisites
 
 - Python 3.12+
-- FFmpeg (must be installed and in PATH)
 
-#### Installing FFmpeg
+#### FFmpeg (Optional - only for embedded subtitle extraction)
+
+FFmpeg is only required if you need to **extract embedded subtitles** from video files. If you only need to download or translate existing .srt files, FFmpeg is not required.
+
+All required dependencies are included in the package installation.
 
 **Windows:**
 ```bash
@@ -103,19 +106,19 @@ After installation, you can use the package as a module:
 
 ```bash
 # Synchronize subtitles (move forward 3 seconds)
-python -m subtitles sync "video.srt" 3000
+python -m opensubtools sync "video.srt" 3000
 
 # Translate subtitles from English to Spanish
-python -m subtitles translate "video.srt"
+python -m opensubtools translate "video.srt"
 
 # Generate subtitles for a video
-python -m subtitles generate "video.mp4"
+python -m opensubtools generate "video.mp4"
 
 # Batch process all videos in a folder
-python -m subtitles batch "C:\Users\YourUser\Videos"
+python -m opensubtools batch "C:\Users\YourUser\Videos"
 
 # Extract embedded subtitles from videos
-python -m subtitles extract "C:\Users\YourUser\Videos"
+python -m opensubtools extract "C:\Users\YourUser\Videos"
 ```
 
 ### Using Individual Scripts
@@ -124,11 +127,11 @@ You can also run individual CLI scripts directly:
 
 ```bash
 # From the src directory
-python -m subtitles.cli.sync "video.srt" 3000
-python -m subtitles.cli.translate "video.srt"
-python -m subtitles.cli.generate "video.mp4"
-python -m subtitles.cli.batch "C:\Users\YourUser\Videos"
-python -m subtitles.cli.extract "C:\Users\YourUser\Videos"
+python -m opensubtools.cli.sync "video.srt" 3000
+python -m opensubtools.cli.translate "video.srt"
+python -m opensubtools.cli.generate "video.mp4"
+python -m opensubtools.cli.batch "C:\Users\YourUser\Videos"
+python -m opensubtools.cli.extract "C:\Users\YourUser\Videos"
 ```
 
 ### GUI Application
@@ -136,7 +139,13 @@ python -m subtitles.cli.extract "C:\Users\YourUser\Videos"
 Launch the modern desktop application with an intuitive graphical interface:
 
 ```bash
-python -m subtitles.gui.app
+python -m opensubtools.gui.app
+```
+
+Or simply run:
+
+```bash
+python main.py
 ```
 
 **Interface Features:**
@@ -150,18 +159,18 @@ The GUI provides four main features accessible through tabs:
 #### Generate Tab
 - **Select video file**: Click to browse and select a video file (supports MP4, MKV, AVI, MOV, WMV, FLV, WebM, M4V, MPG, MPEG)
 - **Choose target language**: Select from 15+ languages for translation
-- **Generate**: The application will:
-  1. Look for existing local SRT files
-  2. Extract Spanish subtitles if available
-  3. Extract and translate English subtitles
-  4. Download subtitles from online sources as fallback
+- **Generate**: The application will try in order:
+  1. Extract embedded subtitles in target language
+  2. Extract embedded English subtitles and translate
+  3. Download subtitles in target language
+  4. Download English subtitles and translate
 - **Progress tracking**: Real-time progress bar and status updates
 
 #### Translate Tab
 - **Select SRT file**: Choose a subtitle file to translate
 - **Choose target language**: Select destination language
 - **Translate**: Converts subtitles to the selected language with smart batching
-- **Output**: Creates a new file with language code (e.g., `video.es.srt`)
+- **Output**: Overwrites the original file
 
 #### Sync Tab
 - **Select SRT file**: Choose subtitle file to synchronize
@@ -178,7 +187,7 @@ The GUI provides four main features accessible through tabs:
 
 ### Windows Context Menu Integration
 
-You can add "Generate Subtitles" to the Windows right-click context menu for video files:
+You can add "OpenSubTools" to the Windows right-click context menu for video files:
 
 ```bash
 # Generate the .reg file
@@ -188,7 +197,7 @@ python src/subtitles/scripts/generate_context_menu.py
 # Or run as administrator to apply automatically
 ```
 
-After installation, right-click on any video file to see "Generate Subtitles" in the context menu.
+After installation, right-click on any video file to see "OpenSubTools" in the context menu.
 
 ### Configuration
 
@@ -245,20 +254,20 @@ output:
 
 The generate command attempts multiple methods in order:
 
-1. **Find local SRT**: Looks for a `.srt` file with the same name as the video
-2. **Extract Spanish**: Extracts Spanish subtitles embedded in the video
-3. **Extract & Translate**: Extracts English subtitles and translates them
-4. **Download Spanish**: Downloads Spanish subtitles from online sources
-5. **Download & Translate**: Downloads English subtitles and translates them
+1. **Extract target language**: Extracts embedded subtitles in the target language from the video
+2. **Extract & Translate English**: Extracts English subtitles and translates them to the target language
+3. **Download target language**: Downloads subtitles in the target language from online sources
+4. **Download & Translate English**: Downloads English subtitles and translates them to the target language
+
+All output files are saved as `{video}.srt` (without language code).
 
 ### Translation
 
 The translation engine uses:
-- Smart English detection with multiple heuristics
 - Batch translation with Google Translate API
+- Automatic retry for untranslated subtitles
 - Parallel processing for faster translations
 - Formatting preservation (HTML/SSA tags)
-- Fallback to individual line translation if batch fails
 
 ### Synchronization
 

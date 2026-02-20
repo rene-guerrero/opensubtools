@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Main entry point for Subtitle Tools GUI."""
+"""Main entry point for OpenSubTools GUI."""
 import sys
 from pathlib import Path
 
