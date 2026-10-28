@@ -22,6 +22,7 @@ from subtitles.core.extractor import (
 from subtitles.core.translator import translate_srt_file
 from subtitles.utils.config import get_config, load_config
 from subtitles.utils.logging_config import get_logger
+from subtitles.utils.paths import sort_paths_naturally
 
 logger = get_logger()
 
@@ -40,7 +41,7 @@ def get_video_files(folder_path: Path) -> list[Path]:
         if f.is_file() and f.suffix.lower() in config.video_formats
     ]
     # Sort by path string for deterministic order across OS
-    return sorted(video_files, key=lambda p: str(p).lower())
+    return sort_paths_naturally(video_files)
 
 
 def process_video(video_path: Path, translator: GoogleTranslator, overwrite: bool = False) -> bool:

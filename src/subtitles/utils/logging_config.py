@@ -36,6 +36,12 @@ def setup_logging(log_file: Optional[str | Path] = None,
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(getattr(logging, level.upper()))
 
+    # Windows consoles often use cp1252, which can't encode emoji
+    try:
+        console_handler.stream.reconfigure(errors='replace')
+    except (AttributeError, ValueError):
+        pass
+
     if use_emoji:
         formatter = EmojiFormatter(
             '%(emoji)s %(message)s'

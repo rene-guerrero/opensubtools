@@ -13,8 +13,10 @@ from pathlib import Path
 from threading import Lock
 
 from subtitles.cli.generate import generate_subtitles_for_video
+from subtitles.core.gtranslate import RateLimitError
 from subtitles.utils.config import get_config, load_config
 from subtitles.utils.logging_config import get_logger
+from subtitles.utils.paths import sort_paths_naturally
 from subtitles.utils.translate import is_srt_spanish
 
 logger = get_logger()
@@ -48,7 +50,7 @@ def find_video_files(folder_path: Path, config) -> list[Path]:
         logger.error(f"Error scanning folder: {e}")
         return []
 
-    return sorted(video_files)
+    return sort_paths_naturally(video_files)
 
 
 def process_single_video(video_path: Path) -> tuple[bool, bool]:
@@ -73,6 +75,10 @@ def process_single_video(video_path: Path) -> tuple[bool, bool]:
 
         result = generate_subtitles_for_video(video_path, output_srt)
         return (result, False)
+    except RateLimitError:
+        # Left for the caller to stop on; swallowing it here would mark every
+        # remaining video failed in seconds.
+        raise
     except Exception as e:
         logger.error(f"Error processing {video_path.name}: {e}")
         return (False, False)
@@ -131,7 +137,15 @@ def main() -> None:
         print(f"[{idx}/{len(video_files)}] {percent:3.0f}% - {video_path.name}", end=" ")
         sys.stdout.flush()
 
-        success, is_skipped = process_single_video(video_path)
+        try:
+            success, is_skipped = process_single_video(video_path)
+        except RateLimitError:
+            print("[RATE LIMITED]")
+            remaining = len(video_files) - idx + 1
+            print(f"\nGoogle is rate limiting this connection. Stopping with "
+                  f"{remaining} video(s) left; run again later to resume.")
+            break
+
         if is_skipped:
             skipped += 1
             print("[SKIPPED - Already has Spanish SRT]")

@@ -8,6 +8,9 @@ import logging
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from subtitles.gui.widgets import FolderDropTarget, LanguageSelector
+from subtitles.utils.logging_config import get_logger
+
+logger = get_logger()
 
 
 class TextboxLogHandler(logging.Handler):
@@ -145,10 +148,9 @@ class BatchTab:
     def process_folder(self):
         """Process folder in background."""
         try:
-            from subtitles.core.extractor import extract_english_subtitles, extract_subtitles_by_language
-            from subtitles.core.translator import translate_srt_file, find_and_translate_local_srt
-            from subtitles.core.downloader import download_subtitle
-            from subtitles.utils.config import get_config, LANGUAGE_CODE_MAP
+            from subtitles.core.gtranslate import RateLimitError
+            from subtitles.utils.config import get_config
+            from subtitles.utils.paths import sort_paths_naturally
 
             config = get_config()
             target_lang = self.lang_selector.get_language()
@@ -159,7 +161,7 @@ class BatchTab:
             for ext in video_extensions:
                 video_files.extend(self.selected_folder.rglob(f"*{ext}"))
 
-            video_files = sorted(video_files)
+            video_files = sort_paths_naturally(video_files)
 
             if not video_files:
                 self.parent.after(0, lambda: self.status_label.configure(
@@ -173,10 +175,12 @@ class BatchTab:
             failed = 0
             skipped = 0
 
+            aborted = False
+
             for i, video in enumerate(video_files):
-                self.parent.after(0, lambda: self.progress.set((i + 1) / total))
-                self.parent.after(0, lambda: self.status_label.configure(
-                    text=f"Processing {i + 1}/{total}: {video.name}"
+                self.parent.after(0, lambda i=i: self.progress.set((i + 1) / total))
+                self.parent.after(0, lambda i=i, name=video.name: self.status_label.configure(
+                    text=f"Processing {i + 1}/{total}: {name}"
                 ))
 
                 output_srt = video.parent / f"{video.stem}.srt"
@@ -185,51 +189,33 @@ class BatchTab:
                     skipped += 1
                     continue
 
-                method_success = False
-                temp_srt = video.parent / f"{video.stem}.temp.srt"
-
-                # 1. Local SRT
-                if find_and_translate_local_srt(video, output_srt, target_lang=target_lang):
-                    method_success = True
-
-                # 2. Extract in target language
-                if not method_success:
-                    lang_codes = LANGUAGE_CODE_MAP.get(target_lang, [target_lang])
-                    if extract_subtitles_by_language(video, temp_srt, lang_codes):
-                        temp_srt.rename(output_srt)
-                        method_success = True
-
-                # 3. Extract English and translate
-                if not method_success:
-                    char_count = extract_english_subtitles(video, temp_srt)
-                    if char_count and char_count > 0:
-                        if translate_srt_file(temp_srt, output_srt, target_lang=target_lang):
-                            temp_srt.unlink(missing_ok=True)
-                            method_success = True
-
-                # 4. Download in target language
-                if not method_success:
-                    downloaded = download_subtitle(video, target_lang)
-                    if downloaded:
-                        method_success = True
+                try:
+                    if self.process_video(video, output_srt, target_lang):
+                        success += 1
                     else:
-                        # 5. Download English and translate
-                        downloaded = download_subtitle(video, "en")
-                        if downloaded:
-                            if translate_srt_file(downloaded, output_srt, target_lang=target_lang):
-                                downloaded.unlink(missing_ok=True)
-                                method_success = True
-
-                if method_success:
-                    success += 1
-                else:
-                    failed += 1
+                        failed += 1
+                except RateLimitError:
+                    # The quota is spent. Stopping leaves the remaining
+                    # episodes untouched so a later run resumes from here,
+                    # instead of marking them all failed in seconds.
+                    logger.error("Stopping batch: Google is rate limiting this connection")
+                    aborted = True
+                    break
 
             self.parent.after(0, lambda: self.progress.set(1.0))
-            self.parent.after(0, lambda: self.status_label.configure(
-                text=f"Complete: {success} success, {failed} failed, {skipped} skipped",
-                text_color="#2FA572"
-            ))
+
+            if aborted:
+                remaining = total - success - failed - skipped
+                self.parent.after(0, lambda: self.status_label.configure(
+                    text=(f"Paused (rate limited): {success} done, {failed} failed, "
+                          f"{skipped} skipped, {remaining} left - run again later"),
+                    text_color="#E8A33D"
+                ))
+            else:
+                self.parent.after(0, lambda: self.status_label.configure(
+                    text=f"Complete: {success} success, {failed} failed, {skipped} skipped",
+                    text_color="#2FA572"
+                ))
 
         except Exception as e:
             self.parent.after(0, lambda: self.status_label.configure(
@@ -238,3 +224,52 @@ class BatchTab:
             ))
         finally:
             self.parent.after(0, lambda: self.process_btn.configure(state="normal"))
+
+    def process_video(self, video, output_srt, target_lang) -> bool:
+        """Produce one subtitle file, trying each source in turn.
+
+        Raises:
+            RateLimitError: Left for the caller to stop the whole run on.
+        """
+        from subtitles.core.extractor import extract_english_subtitles, extract_subtitles_by_language
+        from subtitles.core.translator import translate_srt_file, find_and_translate_local_srt
+        from subtitles.core.downloader import download_subtitle
+        from subtitles.utils.config import LANGUAGE_CODE_MAP
+
+        temp_srt = video.parent / f"{video.stem}.temp.srt"
+
+        try:
+            # 1. Local SRT
+            if find_and_translate_local_srt(video, output_srt, target_lang=target_lang):
+                return True
+
+            # 2. Extract in target language
+            lang_codes = LANGUAGE_CODE_MAP.get(target_lang, [target_lang])
+            if extract_subtitles_by_language(video, temp_srt, lang_codes):
+                temp_srt.rename(output_srt)
+                return True
+
+            # 3. Download in target language
+            if download_subtitle(video, target_lang):
+                return True
+
+            # 4. Extract English and translate
+            char_count = extract_english_subtitles(video, temp_srt)
+            if char_count and char_count > 0:
+                if translate_srt_file(temp_srt, output_srt, target_lang=target_lang):
+                    return True
+
+            # 5. Download English and translate
+            downloaded = download_subtitle(video, "en", use_temp=True)
+            if downloaded and translate_srt_file(downloaded, output_srt, target_lang=target_lang):
+                if downloaded.exists():
+                    downloaded.unlink()
+                return True
+
+            return False
+        finally:
+            # A failed run used to leave its .temp.srt behind, so the folder
+            # filled with half-finished extracts.
+            temp_srt.unlink(missing_ok=True)
+            for leftover in video.parent.glob(f"{video.stem}.temp.*.srt"):
+                leftover.unlink(missing_ok=True)

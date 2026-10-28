@@ -4,3 +4,6 @@ PyYAML==6.0.3
 customtkinter==5.2.1
 subliminal==2.5.0
 tkinterdnd2==0.3.0
+ctranslate2==4.8.2
+sentencepiece==0.2.2
+numpy

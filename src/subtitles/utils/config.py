@@ -22,6 +22,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg"
         ]
     },
+    "download": {
+        # Measured 2026-08: opensubtitles/opensubtitlescom serve nearly all
+        # results (~1s); gestdown/subtitulamos help with TV shows. addic7ed
+        # (503s, ~11s wasted per video), podnapisi and tvsubtitles (dead DNS)
+        # are excluded by default.
+        "providers": [
+            "opensubtitles", "opensubtitlescom", "gestdown", "subtitulamos"
+        ]
+    },
     "translation": {
         "max_batch_characters": 5000,
         "batch_size_subtitles": 50,
@@ -136,6 +145,10 @@ class Config:
     def video_formats(self) -> list:
         return [f".{fmt}" if not fmt.startswith('.') else fmt
                 for fmt in self.get("video.formats", DEFAULT_CONFIG["video"]["formats"])]
+
+    @property
+    def download_providers(self) -> list:
+        return self.get("download.providers", DEFAULT_CONFIG["download"]["providers"])
 
     @property
     def max_batch_chars(self) -> int:

@@ -1,249 +1,93 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-import sys
 import os
-from pathlib import Path
+import sys
+
+from PyInstaller.utils.hooks import (
+    collect_data_files,
+    collect_dynamic_libs,
+    collect_submodules,
+    copy_metadata,
+)
 
 # Add src to path
 src_path = os.path.join(os.path.abspath('.'), 'src')
 sys.path.insert(0, src_path)
 
-# Find tkinterdnd2 location
+# Find tkinterdnd2 location (native tkdnd libraries)
 import tkinterdnd2
 tkdnd_path = os.path.dirname(tkinterdnd2.__file__)
 
-# Find babelfish data files
-import babelfish
-import guessit
-import subliminal
+datas = [
+    (tkdnd_path, 'tkinterdnd2'),
+    ('src/subtitles/gui/icon.ico', 'subtitles/gui'),
+    # Offline en->es model (CTranslate2 weights + SentencePiece tokenizer).
+    # The stanza/ folder shipped with the Argos package is not needed.
+    ('.work/argos/en_es/en_es/model', 'argos_model/model'),
+    ('.work/argos/en_es/en_es/sentencepiece.model', 'argos_model'),
+]
 
-babelfish_path = os.path.dirname(babelfish.__file__)
-guessit_path = os.path.dirname(guessit.__file__)
-subliminal_path = os.path.dirname(subliminal.__file__)
+# Data files (babelfish language tables, guessit config, knowit data)
+datas += collect_data_files('babelfish')
+datas += collect_data_files('guessit')
+datas += collect_data_files('knowit')
+
+# ctranslate2 ships its native DLLs inside the package
+binaries = collect_dynamic_libs('ctranslate2')
+
+# Package metadata needed by stevedore to discover subliminal providers at runtime
+datas += copy_metadata('subliminal')
+datas += copy_metadata('stevedore')
+datas += copy_metadata('dogpile.cache')
+datas += copy_metadata('knowit')
+
+hiddenimports = [
+    # GUI
+    'tkinterdnd2.TkinterDnD',
+    'customtkinter',
+    'darkdetect',
+    'PIL',
+    'PIL._imagingtk',
+    'PIL._tkinter_finder',
+    # Core deps
+    'ffmpeg',
+    'srt',
+    'yaml',
+    'deep_translator',
+    'bs4',
+    'requests',
+    'charset_normalizer',
+    'idna',
+    'urllib3',
+    'certifi',
+    'defusedxml',
+    'defusedxml.ElementTree',
+    'platformdirs',
+    'rarfile',
+    # Offline translation (imported lazily inside offline._load)
+    'ctranslate2',
+    'sentencepiece',
+    # Our package
+    'subtitles',
+]
+
+# Subliminal + its plugin/runtime stack: providers and cache backends are
+# loaded dynamically by name, so PyInstaller cannot detect them statically.
+hiddenimports += collect_submodules('subliminal')
+hiddenimports += collect_submodules('babelfish')
+hiddenimports += collect_submodules('guessit')
+hiddenimports += collect_submodules('rebulk')
+hiddenimports += collect_submodules('knowit')
+hiddenimports += collect_submodules('stevedore')
+hiddenimports += collect_submodules('dogpile')
+hiddenimports += collect_submodules('subtitles')
 
 a = Analysis(
     ['main.py'],
     pathex=[src_path],
-    binaries=[],
-    datas=[
-        (tkdnd_path, 'tkinterdnd2'),
-        ('src/subtitles/gui/icon.ico', 'subtitles/gui'),
-        (babelfish_path, 'babelfish'),
-        (guessit_path, 'guessit'),
-        (subliminal_path, 'subliminal'),
-    ],
-    hiddenimports=[
-        'tkinterdnd2.TkinterDnD',
-        'tkinterdnd2.TkinterDnD.DnDWrapper',
-        'customtkinter',
-        'PIL',
-        'PIL._imagingtk',
-        'PIL._tkinter_finder',
-        'srt',
-        'deep_translator',
-        'bs4',
-        'requests',
-        'charset_normalizer',
-        'idna',
-        'urllib3',
-        'certifi',
-        'subliminal',
-        'subliminal.core',
-        'subliminal.providers',
-        'subliminal.providers.addic7ed',
-        'subliminal.providers.argenteam',
-        'subliminal.providers.legendastv',
-        'subliminal.providers.opensubtitles',
-        'subliminal.providers.podnapisi',
-        'subliminal.providers.shooter',
-        'subliminal.providers.subscene',
-        'subliminal.providers.thesubdb',
-        'subliminal.providers.tvsubtitles',
-        'subliminal.cache',
-        'subliminal.video',
-        'subliminal.subtitle',
-        'subliminal.exceptions',
-        'subliminal.utils',
-        'subliminal.watchdog',
-        'subliminal.converters',
-        'subliminal.refiners',
-        'subliminal.refiners.metadata',
-        'subliminal.refiners.omdb',
-        'subliminal.refiners.poster',
-        'babelfish',
-        'babelfish.language',
-        'babelfish.converters',
-        'babelfish.converters.language',
-        'platformdirs',
-        'pysubs2',
-        'tomlkit',
-        'pytz',
-        'appdirs',
-        'rarfile',
-        'knowit',
-        'knowit.api',
-        'dogpile',
-        'dogpile.core',
-        'dogpile.cache',
-        'stevedore',
-        'stevedore.extension',
-        'cliff',
-        'cliff.app',
-        'cliff.command',
-        'cliff.help',
-        'cliff.formatters',
-        'cliff.utils',
-        'cliff.complete',
-        'cliff.shell',
-        'pkg_resources',
-        'setuptools',
-        'setuptools.extern',
-        'subprocess',
-        'sys',
-        'os',
-        'logging',
-        'datetime',
-        'iso639',
-        'pycountry',
-        'beautifulsoup4',
-        'html5lib',
-        'lxml',
-        'cssutils',
-        'atom',
-        'guessit',
-        'guessit.api',
-        'guessit.io',
-        'guessit.plugins',
-        'guessit.rules',
-        'guessit.rules.providers',
-        'babelfish',
-        'babelfish.converters',
-        'babelfish.converters.age',
-        'babelfish.converters.language',
-        'babelfish.converters.region',
-        'rebulk',
-        'rebulk._fixed',
-        'rebulk._lazy',
-        'rebulk._types',
-        'rebulk._warn',
-        'rebulk.chain',
-        'rebulk.introspector',
-        'rebulk.match',
-        'rebulk.pattern',
-        'rebulk.remodule',
-        'rebulk.rule',
-        'importlib_metadata',
-        'importlib_resources',
-        'chardet',
-        'enum34',
-        'configargparse',
-        ' purity',
-        ' purity.plugins',
-        ' purity.utils',
-        ' purity.exceptions',
-        ' purity.providers',
-        ' purity.providers.trakttv',
-        ' purity.sync',
-        ' purity.sync',
-        ' purity.sync.core',
-        ' purity.sync.core.library',
-        ' purity.sync.core.subtitles',
-        ' purity.exceptions',
-        ' purity.config',
-        ' purity.cache',
-        ' requests_cache',
-        ' sqlalchemy',
-        ' sqlalchemy.engine',
-        ' sqlalchemy.orm',
-        ' sqlalchemy.ext.declarative',
-        ' sqlalchemy.pool',
-        ' pbr',
-        ' pbr.core',
-        ' pbr.util',
-        ' pbr.version',
-        ' pbr.packaging',
-        ' arrow',
-        ' python_dateutil',
-        ' six',
-        ' pytest',
-        ' pytest-cov',
-        ' pytest_cov.formatter',
-        ' mock',
-        ' vcr',
-        ' vcr.stubs',
-        ' vcr.stubs.requests_stubs',
-        ' vcr.serialize',
-        ' vcr.errors',
-        ' vcr.filters',
-        ' vcr.stubs.__init__',
-        ' vcr.stubs.responses',
-        ' vcr.stubs.asgi_stubs',
-        ' vcr.stubs.aiohttp_stubs',
-        ' vcr.matchers',
-        ' vcr.compat',
-        ' vcr.validate',
-        ' vcr.stubs.asgi',
-        ' aiohttp',
-        ' aiohttp.client',
-        ' aiohttp.helpers',
-        ' aiohttp.log',
-        ' aiohttp.multipart',
-        ' aiohttp.parsers',
-        ' aiohttp.resolver',
-        ' aiohttp.signals',
-        ' aiohttp.web',
-        ' aiohttp.web_exceptions',
-        ' aiohttp.web_response',
-        ' aiohttp.worker',
-        ' pint',
-        ' pint.context',
-        ' pint.units',
-        ' pint.util',
-        ' pytimeparse',
-        ' pytimeparse.parser',
-        ' pytimeparse.utils',
-        ' tvdb_api',
-        ' tvdb_ap',
-        ' tvdb_api.model',
-        ' tvdb_api.exceptions',
-        ' tv',
-        ' tvdb_api.uidb_api.cache',
-        ' tvdb_api.request',
-        ' tvdb_api.show',
-        ' tvdb_api.episode',
-        ' tvdb_api.series',
-        ' tvdb_api.season',
-        ' tvdb_api.person',
-        ' tvdb_api.image',
-        ' tvdb_api.favorites',
-        ' tvdb_api.search',
-        'subliminal.providers.tvsubtitles',
-        'subliminal.providers.addic7ed',
-        'subliminal.providers.argenteam',
-        'subliminal.providers.legendastv',
-        'subliminal.providers.opensubtitles',
-        'subliminal.providers.podnapisi',
-        'subliminal.providers.shooter',
-        'subliminal.providers.subscene',
-        'subliminal.providers.thesubdb',
-        'subliminal.providers',
-        'subliminal',
-        'subliminal.core',
-        'subtitles',
-        'subtitles.gui',
-        'subtitles.gui.tabs',
-        'subtitles.gui.tabs.generate',
-        'subtitles.gui.tabs.translate',
-        'subtitles.gui.tabs.batch',
-        'subtitles.gui.tabs.sync',
-        'subtitles.core',
-        'subtitles.core.translator',
-        'subtitles.core.extractor',
-        'subtitles.core.downloader',
-        'subtitles.utils',
-        'subtitles.utils.config',
-        'subtitles.utils.logging_config',
-    ],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

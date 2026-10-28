@@ -13,7 +13,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from subtitles.core.synchronizer import synchronize_srt
+from subtitles.core.synchronizer import auto_synchronize_srt, synchronize_srt
 from subtitles.utils.config import load_config
 from subtitles.utils.logging_config import get_logger
 
@@ -30,7 +30,13 @@ def main() -> None:
     parser.add_argument(
         "offset_ms",
         type=int,
+        nargs="?",
         help="Offset in milliseconds (e.g., 3000 for +3 seconds)"
+    )
+    parser.add_argument(
+        "--video",
+        help="Video file to auto-synchronize against using its audio",
+        default=None
     )
     parser.add_argument(
         "--config",
@@ -45,8 +51,17 @@ def main() -> None:
 
     input_path = Path(args.path)
 
+    if args.video is None and args.offset_ms is None:
+        parser.error("offset_ms or --video is required")
+
     try:
-        output_path = synchronize_srt(input_path, args.offset_ms)
+        if args.video:
+            output_path = auto_synchronize_srt(
+                Path(args.video), input_path,
+                input_path.parent / f"{input_path.stem}.synced{input_path.suffix}"
+            )
+        else:
+            output_path = synchronize_srt(input_path, args.offset_ms)
         logger.info(f"✅ Subtitles synchronized: {output_path.name}")
         sys.exit(0)
     except FileNotFoundError as e:

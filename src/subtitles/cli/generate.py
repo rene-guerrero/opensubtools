@@ -12,9 +12,6 @@ Usage:
 """
 
 import argparse
-import ctypes
-import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -55,8 +52,8 @@ def generate_subtitles_for_video(video_path: Path, output_srt: Path, target_lang
     Tries in order:
     1. Find local .srt file
     2. Extract embedded subtitles in target language
-    3. Extract embedded subtitles in English
-    4. Download in target language
+    3. Download in target language
+    4. Extract embedded subtitles in English and translate
     5. Download in English and translate
 
     Args:
@@ -72,6 +69,7 @@ def generate_subtitles_for_video(video_path: Path, output_srt: Path, target_lang
     if find_and_translate_local_srt(video_path, output_srt, target_lang=target_lang):
         logger.info("✅ Found and processed local subtitles")
         return True
+        
 
     # Case 2: Try to extract subtitles in target language
     logger.info(f"Case 2: Attempting to extract {target_lang} subtitles...")
@@ -81,8 +79,16 @@ def generate_subtitles_for_video(video_path: Path, output_srt: Path, target_lang
         return True
     logger.warning(f"No {target_lang} subtitles found in video")
 
-    # Case 3: Try to extract English subtitles and translate
-    logger.info("Case 3: Attempting to extract English subtitles...")
+    # Case 3: Try to download in target language
+    logger.info(f"Case 3: Attempting to download {target_lang} subtitles...")
+    downloaded = download_subtitle(video_path, target_lang)
+    if downloaded:
+        logger.info(f"✅ Subtitles downloaded: {downloaded.name}")
+        return True
+    logger.warning(f"Could not download {target_lang} subtitles")
+
+    # Case 4: Try to extract English subtitles and translate
+    logger.info("Case 4: Attempting to extract English subtitles...")
     temp_srt = video_path.parent / f"{video_path.stem}.temp_extracted.srt"
     try:
         char_count = extract_english_subtitles(video_path, temp_srt)
@@ -98,31 +104,27 @@ def generate_subtitles_for_video(video_path: Path, output_srt: Path, target_lang
     finally:
         temp_srt.unlink(missing_ok=True)
 
-    # Case 4: Try to download in target language
-    logger.info(f"Case 4: Attempting to download {target_lang} subtitles...")
-    downloaded = download_subtitle(video_path, target_lang)
-    if downloaded:
-        logger.info(f"✅ Subtitles downloaded: {downloaded.name}")
-        return True
-    logger.warning(f"Could not download {target_lang} subtitles")
-
-    # Case 5: Try to download in English and translate
-
     # Case 5: Try to download in English and translate
     logger.info("Case 5: Attempting to download English subtitles...")
-    downloaded = download_subtitle(video_path, "en")
+    downloaded = download_subtitle(video_path, "en", use_temp=True)
 
     if downloaded:
         logger.info(f"English subtitles downloaded: {downloaded.name}")
         logger.info(f"Translating to {target_lang}...")
         try:
             translate_srt_file(downloaded, output_srt, target_lang=target_lang)
-            downloaded.unlink(missing_ok=True)
+            # Clean up temp files
+            if downloaded.exists():
+                downloaded.unlink()
+            # Clean up any other temp files for this video
+            for temp_file in video_path.parent.glob(f"{video_path.stem}.temp.*.srt"):
+                temp_file.unlink(missing_ok=True)
             logger.info("✅ Subtitles generated and translated")
             return True
         except Exception as e:
             logger.error(f"Translation failed: {e}")
-            downloaded.unlink(missing_ok=True)
+            if downloaded.exists():
+                downloaded.unlink(missing_ok=True)
             return False
 
     logger.warning("English subtitles not found online")

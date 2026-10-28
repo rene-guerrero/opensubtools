@@ -183,7 +183,21 @@ class GenerateTab:
                 if extract_subtitles_by_language(video_path, output_srt, lang_codes):
                     success = True
 
-            # 3. Extract English and translate to target language
+            # 3. Download subtitles in target language
+            if not success:
+                self.parent.after(0, lambda: self.progress.set(0.75))
+                self.parent.after(0, lambda: self.status_label.configure(text=f"Downloading {target_lang} subtitles..."))
+
+                downloaded = download_subtitle(video_path, target_lang)
+                if downloaded:
+                    self.parent.after(0, lambda: self.progress.set(1.0))
+                    self.parent.after(0, lambda: self.status_label.configure(
+                        text=f"Saved: {output_srt.name}",
+                        text_color="#2FA572"
+                    ))
+                    success = True
+
+            # 4. Extract English and translate to target language
             if not success:
                 self.parent.after(0, lambda: self.progress.set(0.5))
                 self.parent.after(0, lambda: self.status_label.configure(text="Extracting English subtitles..."))
@@ -204,26 +218,12 @@ class GenerateTab:
                     else:
                         temp_srt.unlink(missing_ok=True)
 
-            # 4. Download subtitles in target language
-            if not success:
-                self.parent.after(0, lambda: self.progress.set(0.75))
-                self.parent.after(0, lambda: self.status_label.configure(text=f"Downloading {target_lang} subtitles..."))
-
-                downloaded = download_subtitle(video_path, target_lang)
-                if downloaded:
-                    self.parent.after(0, lambda: self.progress.set(1.0))
-                    self.parent.after(0, lambda: self.status_label.configure(
-                        text=f"Saved: {output_srt.name}",
-                        text_color="#2FA572"
-                    ))
-                    success = True
-
             # 5. Download and translate if needed
             if not success:
                 self.parent.after(0, lambda: self.progress.set(0.75))
                 self.parent.after(0, lambda: self.status_label.configure(text="Downloading English subtitles..."))
 
-                downloaded = download_subtitle(video_path, "en")
+                downloaded = download_subtitle(video_path, "en", use_temp=True)
                 if downloaded:
                     self.parent.after(0, lambda: self.progress.set(0.85))
                     self.parent.after(0, lambda: self.status_label.configure(text=f"Translating to {target_lang}..."))
@@ -233,7 +233,11 @@ class GenerateTab:
                         self.parent.after(0, lambda m=mapped: self.progress.set(m))
 
                     if translate_srt_file(downloaded, output_srt, target_lang=target_lang, progress_callback=update_progress):
-                        downloaded.unlink(missing_ok=True)
+                        # Clean up temp files
+                        if downloaded.exists():
+                            downloaded.unlink()
+                        for temp_file in video_path.parent.glob(f"{video_path.stem}.temp.*.srt"):
+                            temp_file.unlink(missing_ok=True)
                         success = True
                     else:
                         downloaded.unlink(missing_ok=True)
