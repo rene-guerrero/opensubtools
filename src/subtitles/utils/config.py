@@ -29,7 +29,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # (503s, ~11s wasted per video), podnapisi and tvsubtitles (dead DNS)
         # are excluded by default.
         "providers": [
-            "opensubtitles", "opensubtitlescom", "gestdown", "subtitulamos"
+            "opensubtitles", "opensubtitlescom", "gestdown", "subtitulamos", "subx"
         ]
     },
     "translation": {

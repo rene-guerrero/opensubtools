@@ -29,11 +29,26 @@ except Exception as e:  # pragma: no cover - already configured
     logger.debug(f"Cache region already configured: {e}")
 
 
+# Bundled providers, registered into subliminal's plugin manager by import path
+_EXTRA_PROVIDERS = {
+    'subx': 'subtitles.core.providers.subx:SubxProvider',
+}
+for _name, _path in _EXTRA_PROVIDERS.items():
+    if _name not in provider_manager.names():
+        provider_manager.register(f'{_name} = {_path}')
+
+# Providers that can't work without credentials; skipped until configured
+_NEEDS_CONFIG = {'subx'}
+
+
 def _get_providers() -> Optional[list]:
     """Providers to query, from config, filtered to those subliminal knows."""
-    wanted = get_config().download_providers
+    config = get_config()
+    wanted = config.download_providers
     available = set(provider_manager.names())
-    providers = [p for p in wanted if p in available]
+    configured = config.provider_configs
+    providers = [p for p in wanted
+                 if p in available and (p not in _NEEDS_CONFIG or p in configured)]
     return providers or None
 
 
