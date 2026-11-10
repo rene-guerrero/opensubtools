@@ -15,6 +15,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import srt
+
 from subtitles.core.downloader import download_subtitle
 from subtitles.core.extractor import (
     extract_english_subtitles,
@@ -128,7 +130,28 @@ def generate_subtitles_for_video(video_path: Path, output_srt: Path, target_lang
             return False
 
     logger.warning("English subtitles not found online")
-    return False
+
+    # Case 6: Transcribe the audio and translate the transcript
+    from subtitles.core import speech
+    if not speech.can_transcribe(video_path):
+        return False
+    logger.info("Case 6: Transcribing the audio...")
+    temp_srt = video_path.parent / f"{video_path.stem}.temp.transcript.srt"
+    try:
+        words = speech.transcribe(video_path)
+        if not words:
+            return False
+        cues = speech.transcript_to_subtitles(words)
+        temp_srt.write_text(srt.compose(cues), encoding='utf-8')
+        if translate_srt_file(temp_srt, output_srt, target_lang=target_lang):
+            logger.info("✅ Subtitles transcribed and translated")
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Transcription failed: {e}")
+        return False
+    finally:
+        temp_srt.unlink(missing_ok=True)
 
 
 def main() -> None:

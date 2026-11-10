@@ -7,3 +7,6 @@ tkinterdnd2==0.3.0
 ctranslate2==4.8.2
 sentencepiece==0.2.2
 numpy
+srt
+# Optional: speech-based sync and transcripts. GPU needs nvidia-cublas-cu12 and nvidia-cudnn-cu12.
+faster-whisper==1.2.1

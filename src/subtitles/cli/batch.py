@@ -10,6 +10,7 @@ Usage:
 import argparse
 import sys
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
 from subtitles.cli.generate import generate_subtitles_for_video
@@ -99,6 +100,12 @@ def main() -> None:
         help="Optional path to config.yaml file",
         default=None
     )
+    parser.add_argument(
+        "--workers", "-w",
+        type=int,
+        default=3,
+        help="Videos processed at the same time (default: 3)"
+    )
     args = parser.parse_args()
 
     # Load config if specified
@@ -108,7 +115,9 @@ def main() -> None:
     config = get_config()
 
     # Validate folder
-    folder_path = Path(args.folder)
+    # Shell menus may pass "D:\folder\" and the \" escape leaves a stray
+    # trailing quote in argv, so strip quotes like generate does.
+    folder_path = Path(args.folder.strip().strip('"\''))
     if not folder_path.exists():
         print(f"ERROR: Folder not found: {folder_path}")
         sys.exit(1)
@@ -132,29 +141,36 @@ def main() -> None:
     skipped = 0
     failed = 0
 
-    for idx, video_path in enumerate(video_files, 1):
-        percent = (idx / len(video_files)) * 100
-        print(f"[{idx}/{len(video_files)}] {percent:3.0f}% - {video_path.name}", end=" ")
-        sys.stdout.flush()
+    # Downloads wait on the network and decoding runs in ffmpeg subprocesses,
+    # so a few videos at once overlap well; their log lines interleave.
+    done = 0
+    with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
+        futures = {pool.submit(process_single_video, v): v for v in video_files}
+        for future in as_completed(futures):
+            video_path = futures[future]
+            done += 1
+            try:
+                success, is_skipped = future.result()
+            except RateLimitError:
+                for pending in futures:
+                    pending.cancel()
+                with output_lock:
+                    print(f"[RATE LIMITED] {video_path.name}")
+                    print("\nGoogle is rate limiting this connection. Stopping; "
+                          "run again later to resume.")
+                break
 
-        try:
-            success, is_skipped = process_single_video(video_path)
-        except RateLimitError:
-            print("[RATE LIMITED]")
-            remaining = len(video_files) - idx + 1
-            print(f"\nGoogle is rate limiting this connection. Stopping with "
-                  f"{remaining} video(s) left; run again later to resume.")
-            break
-
-        if is_skipped:
-            skipped += 1
-            print("[SKIPPED - Already has Spanish SRT]")
-        elif success:
-            successful += 1
-            print("[OK]")
-        else:
-            failed += 1
-            print("[FAILED]")
+            if is_skipped:
+                skipped += 1
+                status = "[SKIPPED - Already has Spanish SRT]"
+            elif success:
+                successful += 1
+                status = "[OK]"
+            else:
+                failed += 1
+                status = "[FAILED]"
+            with output_lock:
+                print(f"[{done}/{len(video_files)}] {status} {video_path.name}", flush=True)
 
     # Print summary
     print(f"\n{'='*60}")

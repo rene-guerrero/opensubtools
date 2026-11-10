@@ -131,11 +131,30 @@ MAX_JUMP_MS = 4000
 JUMP_PENALTY = 300.0
 
 
+def _mono_filter(video_path: Path) -> str:
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a:0",
+         "-show_entries", "stream=channels,channel_layout", "-of", "csv=p=0", str(video_path)],
+        capture_output=True, text=True
+    ).stdout.strip().split(",")
+    channels = int(probe[0]) if probe and probe[0].isdigit() else 2
+    layout = probe[1].split("(")[0] if len(probe) > 1 else ""
+    if layout in {"3.0", "3.1", "4.0", "5.0", "5.1", "6.0", "6.1", "7.0", "7.1"}:
+        return "pan=mono|c0=FC"
+    if channels == 1:
+        return "anull"
+    return "pan=mono|c0=0.5*c0+0.5*c1"
+
+
 def detect_speech(video_path: Path) -> np.ndarray:
     hop = SAMPLE_RATE * FRAME_MS // 1000
+    # Downmix and resample before filtering: filtering first runs on every
+    # channel at the source rate, ~5x slower. In surround mixes dialogue sits
+    # in the center channel, which also keeps most music and effects out.
+    mono = _mono_filter(video_path)
     raw = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(video_path), "-vn", "-ac", "1",
-         "-ar", str(SAMPLE_RATE), "-af", "highpass=f=200,lowpass=f=3500",
+        ["ffmpeg", "-v", "error", "-i", str(video_path), "-map", "0:a:0", "-vn",
+         "-af", f"{mono},aresample={SAMPLE_RATE},highpass=f=200,lowpass=f=3500",
          "-f", "s16le", "-"],
         capture_output=True, check=True
     ).stdout
@@ -155,11 +174,9 @@ def _frame(td: timedelta) -> int:
     return int(td.total_seconds() * 1000) // FRAME_MS
 
 
-def _global_offset(subtitles: List[srt.Subtitle], speech: np.ndarray) -> int:
+def _correlation(subtitles: List[srt.Subtitle], speech: np.ndarray):
     n = len(speech)
-    signal = np.zeros(n, np.float32)
-    for sub in subtitles:
-        signal[max(_frame(sub.start), 0):max(min(_frame(sub.end), n), 0)] = 1
+    signal = subtitle_activity(subtitles, n)
     size = 1 << int(np.ceil(np.log2(2 * n)))
     corr = np.fft.irfft(
         np.fft.rfft(speech - speech.mean(), size) * np.conj(np.fft.rfft(signal - signal.mean(), size)),
@@ -167,7 +184,30 @@ def _global_offset(subtitles: List[srt.Subtitle], speech: np.ndarray) -> int:
     )
     max_lag = SEARCH_MS // FRAME_MS
     lags = np.r_[np.arange(0, max_lag), np.arange(-max_lag, 0)]
-    return int(lags[np.r_[corr[:max_lag], corr[-max_lag:]].argmax()])
+    return lags, np.r_[corr[:max_lag], corr[-max_lag:]]
+
+
+def _global_offset(subtitles: List[srt.Subtitle], speech: np.ndarray) -> int:
+    lags, scores = _correlation(subtitles, speech)
+    return int(lags[scores.argmax()])
+
+
+def sync_confidence(subtitles: List[srt.Subtitle], speech: np.ndarray) -> float:
+    """How clearly the best offset beats any offset 3+ seconds away.
+
+    Near 1.0 the audio fits several offsets about equally (music under the
+    dialogue fools the speech detector) and the result is a guess.
+    """
+    lags, scores = _correlation(subtitles, speech)
+    best = scores.argmax()
+    far = np.abs(lags - lags[best]) > 3000 // FRAME_MS
+    runner_up = scores[far].max() if far.any() else 0.0
+    if scores[best] <= 0:
+        return 0.0
+    return float(scores[best] / runner_up) if runner_up > 0 else float("inf")
+
+
+CONFIDENT_SYNC = 1.3
 
 
 def _window_max(values: np.ndarray, radius: int):
@@ -211,17 +251,111 @@ def compute_offsets(subtitles: List[srt.Subtitle], speech: np.ndarray) -> List[i
     return result
 
 
-def auto_synchronize_srt(video_path: Path, srt_path: Path, output_path: Optional[Path] = None) -> Path:
+def subtitle_activity(subtitles: List[srt.Subtitle], frames: int) -> np.ndarray:
+    activity = np.zeros(frames, np.float32)
+    for sub in subtitles:
+        activity[max(_frame(sub.start), 0):max(min(_frame(sub.end), frames), 0)] = 1
+    return activity
+
+
+def _embedded_reference(video_path: Path) -> Optional[List[srt.Subtitle]]:
+    """Dialogue timing from the video's own English track, if it has one.
+
+    Those cues were timed against this exact release, so they are a far
+    cleaner target than speech detected from audio, which music and
+    effects confuse into multi-second false jumps.
+    """
+    from subtitles.core.extractor import extract_english_subtitles
+
+    temp = video_path.parent / f"{video_path.stem}.temp_reference.srt"
+    try:
+        if not extract_english_subtitles(video_path, temp):
+            return None
+        reference = list(srt.parse(temp.read_text(encoding='utf-8', errors='ignore')))
+        return reference if len(reference) >= 20 else None
+    except Exception as e:
+        logger.debug(f"No embedded reference track: {e}")
+        return None
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def _speech_sync(video_path: Path, subtitles: List[srt.Subtitle], output_path: Path,
+                 allow_transcript: bool) -> Optional[Path]:
+    """Time cues by matching their words to a Whisper transcript.
+
+    Returns None when the transcript can't be used, so the caller keeps the
+    energy-based result.
+    """
+    from subtitles.core import speech
+
+    try:
+        words = speech.transcribe(video_path)
+    except Exception as e:
+        logger.warning(f"Transcription failed: {e}")
+        return None
+    if not words:
+        return None
+
+    offsets, ratio = speech.align(subtitles, words)
+    if ratio >= speech.MIN_MATCH_RATIO:
+        aligned = speech.apply_alignment(subtitles, offsets)
+        logger.info(f"  matched {ratio:.0%} of cues to the speech; "
+                    f"dropped {len(subtitles) - len(aligned)} not in this video")
+        output_path.write_text(srt.compose(aligned, reindex=True), encoding='utf-8')
+        return output_path
+
+    if allow_transcript:
+        logger.warning(f"  only {ratio:.0%} of cues are spoken in this video (different script); "
+                       "using the transcript instead")
+        cues = speech.transcript_to_subtitles(words)
+        output_path.write_text(srt.compose(cues, reindex=True), encoding='utf-8')
+        return output_path
+
+    logger.warning(f"  only {ratio:.0%} of cues matched the speech; keeping audio-energy timing")
+    return None
+
+
+def auto_synchronize_srt(video_path: Path, srt_path: Path, output_path: Optional[Path] = None,
+                         language: Optional[str] = None, allow_transcript: bool = False) -> Path:
+    """Align a subtitle to this video.
+
+    Args:
+        language: The subtitle's language. When it matches the audio and the
+            energy-based sync is unsure, the cues are timed against a speech
+            transcript instead.
+        allow_transcript: If the subtitle's words mostly aren't spoken in the
+            video, replace it with the transcript (only sensible before
+            translating; it rewrites the text).
+    """
     if output_path is None:
         output_path = srt_path
 
-    logger.info(f"Auto-synchronizing {srt_path.name} against audio of {video_path.name}")
-    subtitles = list(srt.parse(srt_path.read_text(encoding='utf-8', errors='ignore')))
+    subtitles = list(srt.parse(srt_path.read_text(encoding='utf-8-sig', errors='ignore')))
     if not subtitles:
         raise ValueError(f"No subtitles in {srt_path.name}")
 
-    speech = detect_speech(video_path)
-    offsets = compute_offsets(subtitles, speech)
+    reference = _embedded_reference(video_path)
+    if reference:
+        logger.info(f"Auto-synchronizing {srt_path.name} against embedded subtitles of {video_path.name}")
+        last = max(max(s.end for s in reference), max(s.end for s in subtitles))
+        activity = subtitle_activity(reference, _frame(last) + SEARCH_MS // FRAME_MS)
+    else:
+        logger.info(f"Auto-synchronizing {srt_path.name} against audio of {video_path.name}")
+        activity = detect_speech(video_path)
+        confidence = sync_confidence(subtitles, activity)
+        if confidence < CONFIDENT_SYNC and language:
+            from subtitles.core import speech
+            if language.split('-')[0] == 'en' and speech.can_transcribe(video_path):
+                logger.info(f"  audio sync unsure (confidence {confidence:.2f}); matching against speech")
+                try:
+                    done = _speech_sync(video_path, subtitles, output_path, allow_transcript)
+                except Exception as e:
+                    logger.warning(f"  speech matching failed ({e}); keeping audio-energy timing")
+                    done = None
+                if done:
+                    return done
+    offsets = compute_offsets(subtitles, activity)
 
     previous = None
     for sub, offset in zip(subtitles, offsets):
@@ -229,8 +363,19 @@ def auto_synchronize_srt(video_path: Path, srt_path: Path, output_path: Optional
             logger.info(f"  from {str(sub.start)[:8]}: {offset:+d} ms")
             previous = offset
         shift = timedelta(milliseconds=offset)
-        sub.start = max(timedelta(0), sub.start + shift)
-        sub.end = max(sub.start, sub.end + shift)
+        sub.start = sub.start + shift
+        sub.end = sub.end + shift
+
+    # Cues pushed before the start belong to material this release cut
+    # (a "previously on" recap, a cold-open narration); clamping them to
+    # 0:00 would stack them over the opening.
+    kept = [sub for sub in subtitles if sub.start >= timedelta(0)]
+    if len(kept) < len(subtitles):
+        logger.info(f"  dropped {len(subtitles) - len(kept)} cues not present in this video")
+    subtitles = kept or subtitles
+    for sub in subtitles:
+        sub.start = max(timedelta(0), sub.start)
+        sub.end = max(sub.start, sub.end)
 
     for current, following in zip(subtitles, subtitles[1:]):
         if current.end > following.start:

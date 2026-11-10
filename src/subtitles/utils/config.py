@@ -6,6 +6,7 @@ Config file location: config.yaml in the script directory.
 """
 
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -87,10 +88,14 @@ class Config:
         if config_file:
             self.config_file = Path(config_file)
         else:
-            # Auto-detect config.yaml in current directory
-            default_location = Path("config.yaml")
-            if default_location.exists():
-                self.config_file = default_location
+            # Current directory first, then the install: the context menu
+            # runs from the video's folder, where there is no config.
+            install = (Path(sys.executable).parent if getattr(sys, "frozen", False)
+                       else Path(__file__).resolve().parents[3])
+            for candidate in (Path("config.yaml"), install / "config.yaml"):
+                if candidate.exists():
+                    self.config_file = candidate
+                    break
 
         if self.config_file and self.config_file.exists():
             self._load_yaml()
@@ -149,6 +154,20 @@ class Config:
     @property
     def download_providers(self) -> list:
         return self.get("download.providers", DEFAULT_CONFIG["download"]["providers"])
+
+    @property
+    def provider_configs(self) -> dict:
+        """Per-provider login settings, e.g. {'opensubtitlescom': {'username': ..., 'password': ...}}.
+
+        Entries left blank are skipped so an unfilled template doesn't make
+        the provider fail on empty credentials.
+        """
+        configs = self.get("download.provider_configs", {}) or {}
+        return {
+            name: {k: v for k, v in settings.items() if v}
+            for name, settings in configs.items()
+            if isinstance(settings, dict) and any(settings.values())
+        }
 
     @property
     def max_batch_chars(self) -> int:

@@ -222,6 +222,63 @@ def _translate_texts(texts: List[str], target_lang: str, progress_callback=None)
         return _translate_offline(texts, progress_callback)
 
 
+_SPEAKER_PREFIXES = ("-", "–", "—")
+_LINE_WIDTH = 42
+
+
+def _is_multi_speaker(lines: List[str]) -> bool:
+    return len(lines) > 1 and any(line.lstrip().startswith(_SPEAKER_PREFIXES) for line in lines)
+
+
+def _mostly_uppercase(subtitles: List[srt.Subtitle]) -> bool:
+    """Some tracks (closed captions) are entirely in capitals, which
+    translators treat as acronyms or shouting."""
+    letters = "".join(c for sub in subtitles for c in sub.content if c.isalpha())
+    return bool(letters) and sum(c.isupper() for c in letters) / len(letters) > 0.8
+
+
+def _sentence_case(text: str) -> str:
+    out, capitalize = [], True
+    for char in text.lower():
+        if capitalize and char.isalpha():
+            out.append(char.upper())
+            capitalize = False
+        else:
+            out.append(char)
+        if char in ".!?¡¿\n-♪":
+            capitalize = True
+    # Standalone "I" stays upper in English
+    return re.sub(r"\bi\b", "I", "".join(out))
+
+
+def _prepare_for_translation(text: str, shouting: bool) -> str:
+    """Join display line breaks so a sentence is translated as a whole.
+
+    A cue split over two lines is one sentence; sent as two lines, the
+    translator handles each half alone ("We'll make sure / she's okay" ->
+    "Nos aseguraremos / ella está bien"). Lines starting with a dash are
+    separate speakers and stay apart.
+    """
+    if shouting:
+        text = _sentence_case(text)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if _is_multi_speaker(lines):
+        return "\n".join(lines)
+    return " ".join(lines) if lines else text
+
+
+def _wrap_lines(text: str) -> str:
+    """Re-split a long single-line cue into two balanced display lines."""
+    if "\n" in text or len(text) <= _LINE_WIDTH:
+        return text
+    middle = len(text) // 2
+    spaces = [i for i, c in enumerate(text) if c == " "]
+    if not spaces:
+        return text
+    split = min(spaces, key=lambda i: abs(i - middle))
+    return text[:split] + "\n" + text[split + 1:]
+
+
 def translate_srt_file(
     input_srt: Path,
     output_srt: Path,
@@ -266,6 +323,10 @@ def translate_srt_file(
     if len(subtitles) != original_count:
         logger.info(f"Cleaned markup and merged duplicates: {original_count} -> {len(subtitles)} entries")
 
+    shouting = _mostly_uppercase(subtitles)
+    for sub in subtitles:
+        sub.content = _prepare_for_translation(sub.content, shouting)
+
     # Typeset tracks repeat the same text hundreds of times; translate each
     # distinct text once and map the result back to every entry.
     unique_texts = list(dict.fromkeys(sub.content for sub in subtitles))
@@ -308,7 +369,7 @@ def translate_srt_file(
         result = translation_map.get(sub.content, sub.content)
         if result.strip().lower() == sub.content.strip().lower():
             final_untranslated += 1
-        sub.content = result
+        sub.content = _wrap_lines(result)
 
     if final_untranslated:
         logger.warning(f"{final_untranslated}/{len(subtitles)} subtitles remain untranslated")
