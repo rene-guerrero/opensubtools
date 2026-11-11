@@ -344,9 +344,26 @@ def auto_synchronize_srt(video_path: Path, srt_path: Path, output_path: Optional
         logger.info(f"Auto-synchronizing {srt_path.name} against audio of {video_path.name}")
         activity = detect_speech(video_path)
         confidence = sync_confidence(subtitles, activity)
-        if confidence < CONFIDENT_SYNC and language:
-            from subtitles.core import speech
-            if language.split('-')[0] == 'en' and speech.can_transcribe(video_path):
+        from subtitles.core import speech
+        transcribable = speech.can_transcribe(video_path)
+        same_language = bool(language) and language.split('-')[0] == 'en'
+        # Subtitles in another language than the audio can't be matched word
+        # by word, but the transcript still says exactly when people talk.
+        # Loudness can look "confident" and still be seconds off in stretches,
+        # so the transcript timeline is used whenever it's cheap (GPU) or the
+        # loudness match is unsure.
+        if transcribable and not same_language and (confidence < CONFIDENT_SYNC or speech.on_gpu()):
+            try:
+                timeline = speech.speech_activity(video_path, FRAME_MS, SEARCH_MS // FRAME_MS)
+            except Exception as e:
+                logger.warning(f"  transcription failed ({e}); keeping audio-energy timing")
+                timeline = None
+            if timeline is not None:
+                logger.info(f"  syncing against the speech transcript timeline "
+                            f"(audio confidence {confidence:.2f})")
+                activity = timeline
+        if confidence < CONFIDENT_SYNC and same_language:
+            if transcribable:
                 logger.info(f"  audio sync unsure (confidence {confidence:.2f}); matching against speech")
                 try:
                     done = _speech_sync(video_path, subtitles, output_path, allow_transcript)

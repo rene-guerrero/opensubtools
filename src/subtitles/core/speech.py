@@ -136,6 +136,28 @@ def transcribe(video_path: Path) -> Optional[List[Word]]:
         return words
 
 
+def on_gpu() -> bool:
+    loaded = _load()
+    return bool(loaded) and loaded[1] == "cuda"
+
+
+def speech_activity(video_path: Path, frame_ms: int = 10, pad_frames: int = 0) -> Optional[np.ndarray]:
+    """1 where the transcript has a word being spoken, 0 elsewhere.
+
+    A cleaner sync target than loudness for subtitles in any language: music
+    and effects never become "speech", only recognised words do.
+    """
+    words = transcribe(video_path)
+    if not words:
+        return None
+    per_second = 1000 // frame_ms
+    frames = int(max(end for _, end, _ in words) * per_second) + pad_frames
+    activity = np.zeros(frames, np.float32)
+    for start, end, _ in words:
+        activity[int(start * per_second):int(end * per_second) + 1] = 1
+    return activity
+
+
 def _norm(word: str) -> str:
     return re.sub(r"[^a-z0-9]", "", word.lower())
 
